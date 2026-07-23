@@ -199,3 +199,33 @@ button:hover { background: #555; }
 @media (max-width: 700px) {
     .grid-2 { grid-template-columns: 1fr; }
 }
+.gm-toast {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 9999;
+    max-width: min(360px, calc(100vw - 40px));
+    padding: 10px 14px;
+    background: #2f5d50;
+    color: #fff;
+    border: 1px solid #1f4037;
+    font-size: 14px;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(8px);
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.gm-toast.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+.gm-toast.err {
+    background: #8b3a3a;
+    border-color: #6e2c2c;
+}
+.field-hint {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    color: #666;
+}

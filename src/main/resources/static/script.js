@@ -81,12 +81,39 @@ function jobOpts() {
 }
 
 let editContext = null;
+let activeTab = 'users';
 let usersCache = [];
 let guildsCache = [];
 let partiesCache = [];
 let charactersCache = [];
 let skillsCache = [];
 const combos = {};
+
+function notify(message, type = 'ok') {
+    let el = document.getElementById('gmToast');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'gmToast';
+        document.body.appendChild(el);
+    }
+    el.textContent = message;
+    el.className = `gm-toast ${type} show`;
+    clearTimeout(notify._timer);
+    notify._timer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+/** Reload table(s) after CRUD without leaving the current tab or scrolling to top. */
+async function afterMutation(...loaders) {
+    const tab = activeTab;
+    const y = window.scrollY;
+    for (const fn of loaders) {
+        if (typeof fn === 'function') await fn();
+    }
+    refreshRelationCombos();
+    reapplyFilters();
+    activarTab(tab);
+    requestAnimationFrame(() => window.scrollTo(0, y));
+}
 
 document.addEventListener('DOMContentLoaded', () => {
     const sesion = sessionStorage.getItem(AUTH_KEY);
@@ -248,6 +275,16 @@ function createCombo(containerId, { allowEmpty = false, emptyLabel = '--Empty--'
             }
         }
     });
+    // Enter inside combo must NOT submit the parent form (that reloads the page → Users tab)
+    search.addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        e.stopPropagation();
+        const first = list.querySelector('.combo-item');
+        if (first && list.classList.contains('open')) {
+            first.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        }
+    });
 
     combos[containerId] = state;
     return state;
@@ -334,6 +371,10 @@ function initStaticCombos() {
     createCombo('combo_insEvTargetParty', { allowEmpty: true, emptyLabel: '--Empty--' });
     createCombo('combo_insEvStatus');
     setComboOptions('combo_insEvStatus', STATUSES.map(s => ({ value: s, label: s })));
+    if (combos.combo_insEvStatus) {
+        combos.combo_insEvStatus.onChange = () => syncInsertEventCommentLabel();
+    }
+    syncInsertEventCommentLabel();
     createCombo('combo_insEvReviewer', { allowEmpty: true, emptyLabel: '--Empty--' });
 }
 
@@ -377,6 +418,7 @@ function createEditCombo(key, options, { value, allowEmpty = false, emptyLabel =
 }
 
 window.activarTab = function (tabId) {
+    activeTab = tabId;
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
     document.getElementById(`tab-${tabId}`)?.classList.add('active');
@@ -408,7 +450,7 @@ function assertNumberMins(specs) {
     for (const { id, min } of specs) {
         const v = val(id);
         if (v === '' || Number(v) < min) {
-            alert(`Value must be at least ${min}`);
+            notify(`Value must be at least ${min}`, 'err');
             return false;
         }
     }
@@ -418,11 +460,40 @@ function assertNumberMins(specs) {
 function requireCombo(comboId, label) {
     const v = getComboValue(comboId);
     if (isEmptyComboValue(v)) {
-        alert(`${label} is required`);
+        notify(`${label} is required`, 'err');
         return false;
     }
     return true;
 }
+
+/** Comment is required only when Status is APPROVED or REJECTED. */
+function commentRequiredForStatus(status) {
+    return status != null && status !== '' && status !== 'PENDING';
+}
+
+function setCommentLabelRequired(labelEl, required) {
+    if (!labelEl) return;
+    labelEl.innerHTML = required
+        ? 'Comment<span class="req">*</span>'
+        : 'Comment';
+}
+
+function syncInsertEventCommentLabel() {
+    const status = getComboValue('combo_insEvStatus');
+    setCommentLabelRequired(
+        document.getElementById('lblInsEvComment'),
+        commentRequiredForStatus(status)
+    );
+}
+
+function assertCommentForStatus(status, comment) {
+    if (commentRequiredForStatus(status) && (!comment || !String(comment).trim())) {
+        notify('Comment is required when Status is APPROVED or REJECTED', 'err');
+        return false;
+    }
+    return true;
+}
+
 
 async function cargarTodo() {
     await Promise.all([cargarUsers(), cargarGuilds(), cargarSkills()]);
@@ -443,10 +514,14 @@ function configurarFormularios() {
             hash: val('insUserHash'),
             role: getComboValue('combo_insUserRole')
         };
-        if (!body.name || !body.mail || !body.hash) { alert('Name, mail and password are required'); return; }
+        if (!body.name || !body.mail || !body.hash) { notify('Name, mail and password are required', 'err'); return; }
         const r = await api('/users', { method: 'POST', body: JSON.stringify(body) });
-        if (r.ok) { e.target.reset(); setComboValue('combo_insUserRole', null, ''); await cargarUsers(); refreshRelationCombos(); alert('User created'); }
-        else alert(r.data?.message || 'Error creating user');
+        if (r.ok) {
+            e.target.reset();
+            setComboValue('combo_insUserRole', null, '');
+            await afterMutation(cargarUsers);
+            notify('User created');
+        } else notify(r.data?.message || 'Error creating user', 'err');
     });
 
     document.getElementById('formInsertGuild').addEventListener('submit', async e => {
@@ -458,7 +533,7 @@ function configurarFormularios() {
         const modality = getComboValue('combo_insGuildModality');
         const level = getComboValue('combo_insGuildLevel');
         const name = val('insGuildName');
-        if (!name) { alert('Name is required'); return; }
+        if (!name) { notify('Name is required', 'err'); return; }
         const body = {
             name,
             number: Number(number),
@@ -473,38 +548,36 @@ function configurarFormularios() {
             setComboValue('combo_insGuildLetter', null, '');
             setComboValue('combo_insGuildLevel', null, '');
             setComboValue('combo_insGuildModality', null, '');
-            await cargarGuilds();
-            refreshRelationCombos();
-            alert('Guild created');
-        } else alert(r.data?.message || 'Error creating guild');
+            await afterMutation(cargarGuilds);
+            notify('Guild created');
+        } else notify(r.data?.message || 'Error creating guild', 'err');
     });
 
     document.getElementById('formInsertMentorship').addEventListener('submit', async e => {
         e.preventDefault();
         const userId = getComboValueOrNull('combo_insMentUserId');
         const guildId = getComboValueOrNull('combo_insMentGuildId');
-        if (userId == null || guildId == null) { alert('User and Guild are required'); return; }
+        if (userId == null || guildId == null) { notify('User and Guild are required', 'err'); return; }
         const r = await api('/mentorships', { method: 'POST', body: JSON.stringify({ user_id: userId, guild_id: guildId }) });
         if (r.ok) {
             setComboValue('combo_insMentUserId', null, '');
             setComboValue('combo_insMentGuildId', null, '');
-            await cargarMentorships();
-            alert('Mentorship created');
-        } else alert('Error creating mentorship');
+            await afterMutation(cargarMentorships);
+            notify('Mentorship created');
+        } else notify('Error creating mentorship', 'err');
     });
 
     document.getElementById('formInsertParty').addEventListener('submit', async e => {
         e.preventDefault();
         const guildId = getComboValueOrNull('combo_insPartyGuildId');
-        if (guildId == null) { alert('Guild is required'); return; }
+        if (guildId == null) { notify('Guild is required', 'err'); return; }
         const r = await api('/parties', { method: 'POST', body: JSON.stringify({ name: val('insPartyName'), guild_id: guildId }) });
         if (r.ok) {
             e.target.reset();
             setComboValue('combo_insPartyGuildId', null, '');
-            await cargarParties();
-            refreshRelationCombos();
-            alert('Party created');
-        } else alert('Error creating party');
+            await afterMutation(cargarParties);
+            notify('Party created');
+        } else notify('Error creating party', 'err');
     });
 
     document.getElementById('formInsertCharacter').addEventListener('submit', async e => {
@@ -518,7 +591,7 @@ function configurarFormularios() {
         const userId = getComboValueOrNull('combo_insCharUserId');
         const guildId = getComboValueOrNull('combo_insCharGuildId');
         const name = val('insCharName');
-        if (!name) { alert('Name is required'); return; }
+        if (!name) { notify('Name is required', 'err'); return; }
         const body = {
             name,
             job,
@@ -533,10 +606,9 @@ function configurarFormularios() {
             e.target.reset();
             document.getElementById('insCharExp').value = 0;
             ['combo_insCharJob', 'combo_insCharLevel', 'combo_insCharUserId', 'combo_insCharGuildId', 'combo_insCharPartyId'].forEach(id => setComboValue(id, null, ''));
-            await cargarCharacters();
-            refreshRelationCombos();
-            alert('Character created');
-        } else alert('Error creating character');
+            await afterMutation(cargarCharacters);
+            notify('Character created');
+        } else notify('Error creating character', 'err');
     });
 
     document.getElementById('formInsertSkill').addEventListener('submit', async e => {
@@ -547,7 +619,7 @@ function configurarFormularios() {
         if (!requireCombo('combo_insSkillAoe', 'AOE')) return;
         const name = val('insSkillName');
         const description = val('insSkillDesc');
-        if (!name || !description) { alert('Name and Description are required'); return; }
+        if (!name || !description) { notify('Name and Description are required', 'err'); return; }
         const body = {
             name,
             level_req: Number(getComboValue('combo_insSkillLevelReq')),
@@ -563,10 +635,9 @@ function configurarFormularios() {
             setComboValue('combo_insSkillJob', null, '');
             setComboValue('combo_insSkillLevelReq', null, '');
             setComboValue('combo_insSkillAoe', null, '');
-            await cargarSkills();
-            refreshRelationCombos();
-            alert('Skill created');
-        } else alert('Error creating skill');
+            await afterMutation(cargarSkills);
+            notify('Skill created');
+        } else notify('Error creating skill', 'err');
     });
 
     document.getElementById('formInsertEvent').addEventListener('submit', async e => {
@@ -576,25 +647,27 @@ function configurarFormularios() {
         if (!requireCombo('combo_insEvGuild', 'Guild')) return;
         if (!requireCombo('combo_insEvStatus', 'Status')) return;
         const comment = val('insEvComment');
-        if (!comment) { alert('Comment is required'); return; }
+        const status = getComboValue('combo_insEvStatus');
+        if (!assertCommentForStatus(status, comment)) return;
         const body = {
             caster_character_id: getComboValueOrNull('combo_insEvCaster'),
             skill_id: getComboValueOrNull('combo_insEvSkill'),
             guild_id: getComboValueOrNull('combo_insEvGuild'),
             target_character_id: getComboValueOrNull('combo_insEvTargetChar'),
             target_party_id: getComboValueOrNull('combo_insEvTargetParty'),
-            status: getComboValue('combo_insEvStatus'),
+            status,
             reviewed_by_user_id: getComboValueOrNull('combo_insEvReviewer'),
-            comment
+            comment: comment === '' ? null : comment
         };
         const r = await api('/events', { method: 'POST', body: JSON.stringify(body) });
         if (r.ok) {
             e.target.reset();
             ['combo_insEvCaster', 'combo_insEvSkill', 'combo_insEvGuild', 'combo_insEvTargetChar', 'combo_insEvTargetParty', 'combo_insEvReviewer', 'combo_insEvStatus']
                 .forEach(id => setComboValue(id, null, ''));
-            await cargarEvents();
-            alert('Event created');
-        } else alert('Error creating event');
+            syncInsertEventCommentLabel();
+            await afterMutation(cargarEvents);
+            notify('Event created');
+        } else notify('Error creating event', 'err');
     });
 
     document.getElementById('formEdit').addEventListener('submit', async e => {
@@ -608,13 +681,13 @@ function configurarFormularios() {
                 if (f.allowEmpty && isEmptyComboValue(v)) {
                     v = null;
                 } else if (isEmptyComboValue(v)) {
-                    alert(`${f.label || f.key} is required`);
+                    notify(`${f.label || f.key} is required`, 'err');
                     return;
                 } else if (f.type === 'number' || f.numeric) {
                     v = Number(v);
                     const min = f.min != null ? f.min : 1;
                     if (Number.isNaN(v) || v < min) {
-                        alert(`${f.label || f.key} must be at least ${min}`);
+                        notify(`${f.label || f.key} must be at least ${min}`, 'err');
                         return;
                     }
                 }
@@ -628,12 +701,12 @@ function configurarFormularios() {
                 if (f.type === 'number') {
                     const min = f.min != null ? f.min : (/exp/i.test(f.key) ? 0 : 1);
                     if (v === '' || Number(v) < min) {
-                        alert(`${f.label || f.key} must be at least ${min}`);
+                        notify(`${f.label || f.key} must be at least ${min}`, 'err');
                         return;
                     }
                     v = Number(v);
                 } else if (!f.allowEmpty && v === '') {
-                    alert(`${f.label || f.key} is required`);
+                    notify(`${f.label || f.key} is required`, 'err');
                     return;
                 } else if (f.allowEmpty && v === '') {
                     v = null;
@@ -641,13 +714,17 @@ function configurarFormularios() {
                 body[f.key] = v;
             }
         }
+        if (editContext.kind === 'event') {
+            if (!assertCommentForStatus(body.status, body.comment)) return;
+            if (body.comment === '') body.comment = null;
+        }
         const r = await api(editContext.path, { method: 'PUT', body: JSON.stringify(body) });
         if (r.ok) {
+            const reload = editContext.reload;
             cerrarModal();
-            await editContext.reload();
-            refreshRelationCombos();
-            alert('Updated');
-        } else alert(r.data?.message || 'Error updating');
+            await afterMutation(reload);
+            notify('Updated');
+        } else notify(r.data?.message || 'Error updating', 'err');
     });
 }
 
@@ -666,15 +743,15 @@ async function cargarUsers() {
             <td>${u.id}</td><td>${u.name || ''}</td><td>${u.mail || ''}</td>
             <td style="max-width:220px;word-break:break-all;font-size:12px;">${u.hash || ''}</td>
             <td>${u.role || ''}</td>
-            <td>${acciones(`editarUser(${u.id})`, `borrar('/users/${u.id}', async()=>{await cargarUsers();refreshRelationCombos();})`)}</td>
+            <td>${acciones(`editarUser(${u.id})`, `borrar('/users/${u.id}', () => afterMutation(cargarUsers))`)}</td>
         </tr>`).join('') || '<tr><td colspan="6">No data</td></tr>';
     reapplyFilters();
 }
 
 window.editarUser = async function (id) {
     const r = await api(`/users/${id}`);
-    if (!r.ok) return alert('Not found');
-    abrirEdit('Edit User', `/users/${id}`, async () => { await cargarUsers(); refreshRelationCombos(); }, [
+    if (!r.ok) return notify('Not found', 'err');
+    abrirEdit('Edit User', `/users/${id}`, cargarUsers, [
         { key: 'name', label: 'Name', value: r.data.name },
         { key: 'mail', label: 'Mail', value: r.data.mail },
         { key: 'hash', label: 'New password (leave empty to keep)', value: '', type: 'password', optionalPassword: true },
@@ -693,15 +770,15 @@ async function cargarGuilds() {
             <td>${g.letter || ''}</td>
             <td>${cellOrNull(g.level)}</td>
             <td>${cellOrNull(g.modality)}</td>
-            <td>${acciones(`editarGuild(${g.id})`, `borrar('/guilds/${g.id}', async()=>{await cargarGuilds();refreshRelationCombos();})`)}</td>
+            <td>${acciones(`editarGuild(${g.id})`, `borrar('/guilds/${g.id}', () => afterMutation(cargarGuilds))`)}</td>
         </tr>`).join('') || '<tr><td colspan="7">No data</td></tr>';
     reapplyFilters();
 }
 
 window.editarGuild = async function (id) {
     const r = await api(`/guilds/${id}`);
-    if (!r.ok) return alert('Not found');
-    abrirEdit('Edit Guild', `/guilds/${id}`, async () => { await cargarGuilds(); refreshRelationCombos(); }, [
+    if (!r.ok) return notify('Not found', 'err');
+    abrirEdit('Edit Guild', `/guilds/${id}`, cargarGuilds, [
         { key: 'name', label: 'Name', value: r.data.name },
         { key: 'number', label: 'Number', combo: true, numeric: true,
             options: CURSOS.map(n => ({ value: Number(n), label: n })), value: r.data.number },
@@ -723,7 +800,7 @@ async function cargarMentorships() {
         return `<tr>
             <td>${idName(m.user_id, u?.name)}</td>
             <td>${g ? guildLabel(g) : idName(m.guild_id, '?')}</td>
-            <td>${acciones(`editarMentorship(${m.user_id}, ${m.guild_id})`, `borrar('/mentorships/${m.user_id}/${m.guild_id}', cargarMentorships)`)}</td>
+            <td>${acciones(`editarMentorship(${m.user_id}, ${m.guild_id})`, `borrar('/mentorships/${m.user_id}/${m.guild_id}', () => afterMutation(cargarMentorships))`)}</td>
         </tr>`;
     }).join('') || '<tr><td colspan="3">No data</td></tr>';
     reapplyFilters();
@@ -746,7 +823,7 @@ async function cargarParties() {
         return `<tr>
             <td>${p.id}</td><td>${p.name || ''}</td>
             <td>${g ? guildLabel(g) : idName(p.guild_id, '?')}</td>
-            <td>${acciones(`editarParty(${p.id})`, `borrar('/parties/${p.id}', async()=>{await cargarParties();refreshRelationCombos();})`)}</td>
+            <td>${acciones(`editarParty(${p.id})`, `borrar('/parties/${p.id}', () => afterMutation(cargarParties))`)}</td>
         </tr>`;
     }).join('') || '<tr><td colspan="4">No data</td></tr>';
     reapplyFilters();
@@ -754,8 +831,8 @@ async function cargarParties() {
 
 window.editarParty = async function (id) {
     const r = await api(`/parties/${id}`);
-    if (!r.ok) return alert('Not found');
-    abrirEdit('Edit Party', `/parties/${id}`, async () => { await cargarParties(); refreshRelationCombos(); }, [
+    if (!r.ok) return notify('Not found', 'err');
+    abrirEdit('Edit Party', `/parties/${id}`, cargarParties, [
         { key: 'name', label: 'Name', value: r.data.name },
         { key: 'guild_id', label: 'Guild', combo: true, numeric: true,
             options: guildOpts(), value: r.data.guild_id }
@@ -775,7 +852,7 @@ async function cargarCharacters() {
             <td>${idName(c.user_id, u?.name)}</td>
             <td>${g ? guildLabel(g) : idName(c.guild_id, '?')}</td>
             <td>${cellOrNull(c.party_id, c.party_id != null ? idName(c.party_id, p?.name) : null)}</td>
-            <td>${acciones(`editarCharacter(${c.id})`, `borrar('/characters/${c.id}', async()=>{await cargarCharacters();refreshRelationCombos();})`)}</td>
+            <td>${acciones(`editarCharacter(${c.id})`, `borrar('/characters/${c.id}', () => afterMutation(cargarCharacters))`)}</td>
         </tr>`;
     }).join('') || '<tr><td colspan="9">No data</td></tr>';
     reapplyFilters();
@@ -783,8 +860,8 @@ async function cargarCharacters() {
 
 window.editarCharacter = async function (id) {
     const r = await api(`/characters/${id}`);
-    if (!r.ok) return alert('Not found');
-    abrirEdit('Edit Character', `/characters/${id}`, async () => { await cargarCharacters(); refreshRelationCombos(); }, [
+    if (!r.ok) return notify('Not found', 'err');
+    abrirEdit('Edit Character', `/characters/${id}`, cargarCharacters, [
         { key: 'name', label: 'Name', value: r.data.name },
         { key: 'job', label: 'Job', combo: true, options: jobOpts(), value: r.data.job },
         { key: 'level', label: 'Level', combo: true, numeric: true,
@@ -818,15 +895,15 @@ async function cargarSkills() {
         <tr>
             <td>${s.id}</td><td>${s.name || ''}</td><td>${s.level_req ?? ''}</td><td>${s.job || ''}</td>
             <td>${s.aoe || ''}</td><td>${s.exp_cost ?? ''}</td><td>${s.description || ''}</td>
-            <td>${acciones(`editarSkill(${s.id})`, `borrar('/skills/${s.id}', async()=>{await cargarSkills();refreshRelationCombos();})`)}</td>
+            <td>${acciones(`editarSkill(${s.id})`, `borrar('/skills/${s.id}', () => afterMutation(cargarSkills))`)}</td>
         </tr>`).join('') || '<tr><td colspan="8">No data</td></tr>';
     reapplyFilters();
 }
 
 window.editarSkill = async function (id) {
     const r = await api(`/skills/${id}`);
-    if (!r.ok) return alert('Not found');
-    abrirEdit('Edit Skill', `/skills/${id}`, async () => { await cargarSkills(); refreshRelationCombos(); }, [
+    if (!r.ok) return notify('Not found', 'err');
+    abrirEdit('Edit Skill', `/skills/${id}`, cargarSkills, [
         { key: 'name', label: 'Name', value: r.data.name },
         { key: 'level_req', label: 'Level Req', combo: true, numeric: true,
             options: CURSOS.map(n => ({ value: Number(n), label: n })), value: r.data.level_req },
@@ -857,8 +934,8 @@ async function cargarEvents() {
             <td>${ev.status || ''}</td>
             <td>${cellOrNull(ev.reviewed_by_user_id, ev.reviewed_by_user_id != null ? idName(ev.reviewed_by_user_id, reviewer?.name) : null)}</td>
             <td>${ev.created_at || ''}</td>
-            <td>${ev.comment || ''}</td>
-            <td>${acciones(`editarEvent(${ev.id})`, `borrar('/events/${ev.id}', cargarEvents)`)}</td>
+            <td>${cellOrNull(ev.comment)}</td>
+            <td>${acciones(`editarEvent(${ev.id})`, `borrar('/events/${ev.id}', () => afterMutation(cargarEvents))`)}</td>
         </tr>`;
     }).join('') || '<tr><td colspan="11">No data</td></tr>';
     reapplyFilters();
@@ -866,7 +943,7 @@ async function cargarEvents() {
 
 window.editarEvent = async function (id) {
     const r = await api(`/events/${id}`);
-    if (!r.ok) return alert('Not found');
+    if (!r.ok) return notify('Not found', 'err');
     abrirEdit('Edit Event', `/events/${id}`, cargarEvents, [
         { key: 'caster_character_id', label: 'Caster', combo: true, numeric: true,
             options: characterOpts(), value: r.data.caster_character_id },
@@ -878,11 +955,27 @@ window.editarEvent = async function (id) {
             options: characterOpts(), value: r.data.target_character_id },
         { key: 'target_party_id', label: 'Target Party', combo: true, numeric: true, allowEmpty: true, emptyLabel: '--Empty--',
             options: partyOpts(), value: r.data.target_party_id },
-        { key: 'status', label: 'Status', combo: true, options: STATUSES.map(s => ({ value: s, label: s })), value: r.data.status },
+        {
+            key: 'status', label: 'Status', combo: true, options: STATUSES.map(s => ({ value: s, label: s })), value: r.data.status,
+            onChange: (status) => {
+                const commentField = editContext?.fields?.find(f => f.key === 'comment');
+                const wrap = document.getElementById('edit_comment')?.closest('.form-group');
+                const commentLab = wrap?.querySelector('label');
+                const required = commentRequiredForStatus(status);
+                setCommentLabelRequired(commentLab, required);
+                if (commentField) commentField.allowEmpty = !required;
+            }
+        },
         { key: 'reviewed_by_user_id', label: 'Reviewed By (Teacher)', combo: true, numeric: true, allowEmpty: true, emptyLabel: '--Empty--',
             options: teacherOpts(), value: r.data.reviewed_by_user_id },
-        { key: 'comment', label: 'Comment', value: r.data.comment || '' }
-    ]);
+        {
+            key: 'comment',
+            label: 'Comment',
+            value: r.data.comment || '',
+            allowEmpty: !commentRequiredForStatus(r.data.status),
+            hint: 'Required when Status is APPROVED or REJECTED'
+        }
+    ], 'event');
 };
 
 function fieldLabelHtml(f) {
@@ -892,8 +985,8 @@ function fieldLabelHtml(f) {
         : f.label;
 }
 
-function abrirEdit(title, path, reload, fields) {
-    editContext = { path, reload, fields: [] };
+function abrirEdit(title, path, reload, fields, kind = null) {
+    editContext = { path, reload, fields: [], kind };
     document.getElementById('modalTitle').textContent = title;
     const box = document.getElementById('editFields');
     box.innerHTML = '';
@@ -909,6 +1002,12 @@ function abrirEdit(title, path, reload, fields) {
             host.id = comboId;
             wrap.appendChild(lab);
             wrap.appendChild(host);
+            if (f.hint) {
+                const hint = document.createElement('small');
+                hint.className = 'field-hint';
+                hint.textContent = f.hint;
+                wrap.appendChild(hint);
+            }
             box.appendChild(wrap);
             createCombo(comboId, {
                 allowEmpty: !!f.allowEmpty,
@@ -936,6 +1035,12 @@ function abrirEdit(title, path, reload, fields) {
             wrap.className = 'form-group';
             wrap.innerHTML = `<label>${fieldLabelHtml(f)}</label>
                 <input type="${t}" id="edit_${f.key}" value="${f.value ?? ''}"${minAttr}>`;
+            if (f.hint) {
+                const hint = document.createElement('small');
+                hint.className = 'field-hint';
+                hint.textContent = f.hint;
+                wrap.appendChild(hint);
+            }
             box.appendChild(wrap);
             editContext.fields.push(f);
         }
@@ -949,6 +1054,6 @@ window.borrar = async function (path, reloadFn) {
     const r = await api(path, { method: 'DELETE' });
     if (r.ok || r.status === 204) {
         await reloadFn();
-        alert('Deleted');
-    } else alert('Error deleting');
+        notify('Deleted');
+    } else notify('Error deleting', 'err');
 };
