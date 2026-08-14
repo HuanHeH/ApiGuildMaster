@@ -303,15 +303,19 @@
 <div id="modalEdit" class="modal">
     <div class="modal-content">
         <span class="close" onclick="cerrarModal()">&times;</span>
-        <h3 id="modalTitle">Edit</h3>
-        <form id="formEdit">
-            <div id="editFields"></div>
-            <button type="submit">Save</button>
-            <button type="button" onclick="cerrarModal()">Cancel</button>
-        </form>
+        <div class="modal-scroll">
+            <h3 id="modalTitle">Edit</h3>
+            <form id="formEdit">
+                <div id="editFields"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" onclick="cerrarModal()">Cancel</button>
+                    <button type="submit" class="btn-success">Save</button>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 
-<script src="/script.js?v=20260806o"></script>
+<script src="/script.js?v=20260814c"></script>
 </body>
 </html>
