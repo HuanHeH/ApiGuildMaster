@@ -1,23 +1,26 @@
 package dam.guildmaster.dto;
 
 import dam.guildmaster.enums.Role;
+import dam.guildmaster.entity.User;
 
-public class LoginResponse {
+/** Teacher view of students — mail visible, hash never. */
+public class UserTeacherViewDto {
     private Integer id;
     private String name;
     private String mail;
     private Role role;
-    private String accessToken;
-    private String tokenType = "Bearer";
 
-    public LoginResponse() {}
+    public UserTeacherViewDto() {}
 
-    public LoginResponse(Integer id, String name, String mail, Role role, String accessToken) {
+    public UserTeacherViewDto(Integer id, String name, String mail, Role role) {
         this.id = id;
         this.name = name;
         this.mail = mail;
         this.role = role;
-        this.accessToken = accessToken;
+    }
+
+    public static UserTeacherViewDto from(User u) {
+        return new UserTeacherViewDto(u.getId(), u.getName(), u.getMail(), u.getRole());
     }
 
     public Integer getId() { return id; }
@@ -28,8 +31,4 @@ public class LoginResponse {
     public void setMail(String mail) { this.mail = mail; }
     public Role getRole() { return role; }
     public void setRole(Role role) { this.role = role; }
-    public String getAccessToken() { return accessToken; }
-    public void setAccessToken(String accessToken) { this.accessToken = accessToken; }
-    public String getTokenType() { return tokenType; }
-    public void setTokenType(String tokenType) { this.tokenType = tokenType; }
 }

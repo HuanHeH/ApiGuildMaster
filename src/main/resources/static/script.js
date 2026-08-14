@@ -1,13 +1,15 @@
 const API = '/api';
-const AUTH_KEY = 'gm_admin_auth';
+const AUTH_KEY = 'gm_auth';
 
 const ROLES = ['Student', 'Teacher', 'Admin'];
 const AOES = ['SINGLE', 'PARTY', 'GUILD'];
-const STATUSES = ['PENDING', 'APPROVED', 'REJECTED'];
+const STATUSES = ['PENDING', 'APPROVED', 'REJECTED', 'AUTO'];
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const LEVELS = ['ESO', 'Bachillerato', 'FPBásica', 'FPMedia', 'FPSuperior'];
 const MODALITIES = ['Ciencias', 'Letras', 'Humanidades', 'Tecnologico', 'DAM', 'SMR', 'DAW', 'ASIR'];
-const JOBS = ['Mage', 'Rogue', 'Paladin'];
+const JOBS = ['Mage', 'Rogue', 'Paladin', 'Common', 'Teacher'];
+const CHARACTER_JOBS = ['Mage', 'Rogue', 'Paladin'];
+const LEVEL_UP_COMMENT = 'Auto-applied level up (no teacher review)';
 const CURSOS = ['1', '2', '3', '4'];
 /** Sentinel for optional combo --Empty-- (stored as NULL in DB) */
 const EMPTY_SENTINEL = '__EMPTY__';
@@ -34,11 +36,49 @@ function guildLabel(g) {
     const detail = parts.join(' ');
     return `${g.id}. ${g.name || '?'}${detail ? ` (${detail})` : ''}`;
 }
+/** Classroom-style guild label, e.g. "1ºA FPSuperior DAM". */
+function guildClassLabel(g) {
+    if (!g) return '';
+    const head = `${g.number}º${g.letter}`;
+    return [head, g.level, g.modality].filter(v => v != null && String(v).trim() !== '').join(' ');
+}
 function userById(id) { return usersCache.find(u => u.id === id); }
 function guildById(id) { return guildsCache.find(g => g.id === id); }
 function partyById(id) { return partiesCache.find(p => p.id === id); }
 function characterById(id) { return charactersCache.find(c => c.id === id); }
-function skillById(id) { return skillsCache.find(s => s.id === id); }
+function skillById(id) {
+    if (id == null || id === '') return undefined;
+    return skillsCache.find(s => Number(s.id) === Number(id));
+}
+
+function isTeacherExpSkill(skill) {
+    if (!skill || String(skill.job || '').toLowerCase() !== 'teacher') return false;
+    return isGrantExpSkill(skill) || isRemoveExpSkill(skill);
+}
+function isGrantExpSkill(skill) {
+    if (!skill) return false;
+    const name = String(skill.name || '').toLowerCase();
+    return name.includes('grant exp') || name.includes('repartir exp');
+}
+function isRemoveExpSkill(skill) {
+    if (!skill) return false;
+    const name = String(skill.name || '').toLowerCase();
+    return name.includes('remove exp') || name.includes('quitar exp');
+}
+function isLevelUpSkill(skill) {
+    if (!skill || String(skill.job || '').toLowerCase() !== 'common') return false;
+    return String(skill.name || '').toLowerCase().includes('level up');
+}
+function isChangeJobSkill(skill) {
+    return String(skill?.name || '').toLowerCase().includes('change job');
+}
+/** Auto skills: Level Up, Change Job, Grant/Remove EXP (DB Status = AUTO). */
+function isAutoEventSkill(skill) {
+    return isTeacherExpSkill(skill) || isLevelUpSkill(skill) || isChangeJobSkill(skill);
+}
+function eventStatusLabel(ev, skill) {
+    return ev.status || '';
+}
 function teacherOpts() {
     return usersCache
         .filter(u => u.role === 'Teacher')
@@ -127,6 +167,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const admin = JSON.parse(sesion);
+    if (admin.role !== 'Admin' || !admin.access_token) {
+        sessionStorage.removeItem(AUTH_KEY);
+        window.location.replace('/login.html');
+        return;
+    }
     document.getElementById('app').style.display = 'block';
     document.getElementById('adminSesion').textContent = `Admin: ${admin.name}`;
     document.getElementById('btnLogout').addEventListener('click', () => {
@@ -145,6 +190,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     initTableFilters();
+    initTableSorting();
     initStaticCombos();
     configurarFormularios();
     cargarTodo();
@@ -179,6 +225,88 @@ function reapplyFilters() {
     document.querySelectorAll('.table-wrap').forEach(wrap => {
         const inp = wrap.querySelector('.table-filter');
         if (inp) filtrarTabla(wrap.dataset.table, inp.value);
+        applyTableSort(wrap.dataset.table);
+    });
+}
+
+/* ========== TABLE COLUMN SORT ========== */
+const tableSortState = {};
+
+function initTableSorting() {
+    document.querySelectorAll('.table-wrap').forEach(wrap => {
+        const tbodyId = wrap.dataset.table;
+        const headers = wrap.querySelectorAll('thead th');
+        headers.forEach((th, colIndex) => {
+            if (/^actions$/i.test(th.textContent.trim())) return;
+            th.classList.add('sortable');
+            th.dataset.colIndex = String(colIndex);
+            th.addEventListener('click', () => sortTableByColumn(tbodyId, colIndex, th.textContent.trim()));
+        });
+    });
+}
+
+function sortTableByColumn(tbodyId, colIndex, label) {
+    const prev = tableSortState[tbodyId];
+    const dir = prev && prev.colIndex === colIndex && prev.dir === 'asc' ? 'desc' : 'asc';
+    tableSortState[tbodyId] = { colIndex, dir, label };
+    applyTableSort(tbodyId);
+    updateSortHeaders(tbodyId);
+}
+
+function applyTableSort(tbodyId) {
+    const state = tableSortState[tbodyId];
+    if (!state) return;
+    const tbody = document.getElementById(tbodyId);
+    if (!tbody) return;
+
+    const rows = Array.from(tbody.querySelectorAll('tr')).filter(tr => !tr.querySelector('td[colspan]'));
+    if (rows.length < 2) return;
+
+    const mul = state.dir === 'asc' ? 1 : -1;
+    rows.sort((a, b) => mul * compareSortCells(a.children[state.colIndex], b.children[state.colIndex], state.label));
+    rows.forEach(row => tbody.appendChild(row));
+}
+
+function compareSortCells(tdA, tdB, label) {
+    const va = extractSortValue(tdA, label);
+    const vb = extractSortValue(tdB, label);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === 'number' && typeof vb === 'number') return va - vb;
+    return String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function extractSortValue(td, label) {
+    if (!td) return null;
+    const text = td.textContent.trim();
+    if (text === '' || text === 'NULL') return null;
+
+    const idPrefix = text.match(/^(\d+)\.\s/);
+    if (idPrefix) return Number(idPrefix[1]);
+
+    if (/^(ID|Number|Level|Exp|Level Req|Exp Cost)$/i.test(label)) {
+        const n = Number(text);
+        if (!Number.isNaN(n)) return n;
+    }
+
+    if (/^created$/i.test(label)) {
+        const t = Date.parse(text);
+        if (!Number.isNaN(t)) return t;
+    }
+
+    return text.toLowerCase();
+}
+
+function updateSortHeaders(tbodyId) {
+    const wrap = document.querySelector(`.table-wrap[data-table="${CSS.escape(tbodyId)}"]`);
+    if (!wrap) return;
+    const state = tableSortState[tbodyId];
+    wrap.querySelectorAll('thead th.sortable').forEach(th => {
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (state && Number(th.dataset.colIndex) === state.colIndex) {
+            th.classList.add(state.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+        }
     });
 }
 
@@ -364,18 +492,28 @@ function initStaticCombos() {
     createCombo('combo_insSkillAoe');
     setComboOptions('combo_insSkillAoe', AOES.map(a => ({ value: a, label: a })));
 
-    createCombo('combo_insEvCaster');
+    createCombo('combo_insEvCaster', { allowEmpty: true, emptyLabel: '--Empty--' });
     createCombo('combo_insEvSkill');
     createCombo('combo_insEvGuild');
     createCombo('combo_insEvTargetChar', { allowEmpty: true, emptyLabel: '--Empty--' });
     createCombo('combo_insEvTargetParty', { allowEmpty: true, emptyLabel: '--Empty--' });
     createCombo('combo_insEvStatus');
     setComboOptions('combo_insEvStatus', STATUSES.map(s => ({ value: s, label: s })));
-    if (combos.combo_insEvStatus) {
-        combos.combo_insEvStatus.onChange = () => syncInsertEventCommentLabel();
-    }
-    syncInsertEventCommentLabel();
     createCombo('combo_insEvReviewer', { allowEmpty: true, emptyLabel: '--Empty--' });
+    createCombo('combo_insEvChangeJob');
+    setComboOptions('combo_insEvChangeJob', CHARACTER_JOBS.map(j => ({ value: j, label: j })));
+    if (combos.combo_insEvChangeJob) {
+        combos.combo_insEvChangeJob.onChange = () => syncChangeJobPreview();
+    }
+    if (combos.combo_insEvStatus) {
+        combos.combo_insEvStatus.onChange = () => syncInsertEventFormUI();
+    }
+    if (combos.combo_insEvSkill) {
+        combos.combo_insEvSkill.onChange = () => syncInsertEventFormUI({ fromSkillChange: true });
+    }
+    document.getElementById('insEvExpSignPlus')?.addEventListener('click', () => setInsertExpSign('+'));
+    document.getElementById('insEvExpSignMinus')?.addEventListener('click', () => setInsertExpSign('-'));
+    syncInsertEventFormUI();
 }
 
 function refreshRelationCombos() {
@@ -431,10 +569,23 @@ window.cerrarModal = function () {
 };
 
 async function api(path, options = {}) {
+    const sesion = JSON.parse(sessionStorage.getItem(AUTH_KEY) || '{}');
+    const headers = {
+        'Content-Type': 'application/json',
+        ...(options.headers || {})
+    };
+    if (sesion.access_token) {
+        headers['Authorization'] = `Bearer ${sesion.access_token}`;
+    }
     const res = await fetch(`${API}${path}`, {
-        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-        ...options
+        ...options,
+        headers
     });
+    if (res.status === 401) {
+        sessionStorage.removeItem(AUTH_KEY);
+        window.location.href = '/login.html';
+        return { ok: false, status: 401, data: { message: 'Unauthorized' } };
+    }
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { data = text; }
@@ -466,29 +617,419 @@ function requireCombo(comboId, label) {
     return true;
 }
 
-/** Comment is required only when Status is APPROVED or REJECTED. */
+/** Comment is required when Status is not PENDING (APPROVED / REJECTED / AUTO). */
 function commentRequiredForStatus(status) {
     return status != null && status !== '' && status !== 'PENDING';
 }
 
-function setCommentLabelRequired(labelEl, required) {
+function reviewerRequiredForStatus(status, skill) {
+    if (status === 'APPROVED' || status === 'REJECTED') return true;
+    if (status === 'AUTO' && isTeacherExpSkill(skill)) return true;
+    return false;
+}
+
+function setLabeledRequired(labelEl, baseLabel, required) {
     if (!labelEl) return;
     labelEl.innerHTML = required
-        ? 'Comment<span class="req">*</span>'
-        : 'Comment';
+        ? `${baseLabel}<span class="req">*</span>`
+        : baseLabel;
+}
+
+function setCommentLabelRequired(labelEl, required) {
+    setLabeledRequired(labelEl, 'Comment', required);
+}
+
+function getInsertExpSign() {
+    const minus = document.getElementById('insEvExpSignMinus');
+    if (minus && minus.classList.contains('selected')) return '-';
+    return '+';
+}
+
+function setInsertExpSign(sign) {
+    const plus = document.getElementById('insEvExpSignPlus');
+    const minus = document.getElementById('insEvExpSignMinus');
+    if (!plus || !minus) return;
+    const positive = sign !== '-';
+    plus.classList.toggle('selected', positive);
+    minus.classList.toggle('selected', !positive);
+}
+
+function parseExpDeltaComment(comment) {
+    if (comment == null || String(comment).trim() === '') return null;
+    const raw = String(comment).trim();
+    const m = raw.match(/^([+-]?)(\d+)$/);
+    if (!m) return null;
+    const amount = Number(m[2]);
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    const sign = m[1] === '-' ? '-' : '+';
+    return { sign, amount };
+}
+
+function buildExpDeltaComment(sign, amount) {
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return `${sign === '-' ? '-' : '+'}${Math.trunc(n)}`;
+}
+
+function capitalizeJobUi(job) {
+    const j = String(job || '').trim().toLowerCase();
+    if (!j) return '';
+    return j.charAt(0).toUpperCase() + j.slice(1);
+}
+
+function changeJobAutoComment(job) {
+    const normalized = capitalizeJobUi(job);
+    if (!CHARACTER_JOBS.some(j => j.toLowerCase() === normalized.toLowerCase())) return null;
+    return `Auto-applied Change Job to ${normalized}`;
+}
+
+function parseChangeJobTarget(comment) {
+    if (comment == null || String(comment).trim() === '') return null;
+    const raw = String(comment).trim();
+    const m = raw.match(/^Auto-applied Change Job to\s+(\w+)$/i);
+    const normalized = capitalizeJobUi(m ? m[1] : raw);
+    if (!CHARACTER_JOBS.some(j => j.toLowerCase() === normalized.toLowerCase())) return null;
+    return normalized;
+}
+
+function syncChangeJobPreview() {
+    const job = getComboValueOrNull('combo_insEvChangeJob');
+    const preview = document.getElementById('insEvChangeJobPreview');
+    if (preview) preview.value = job ? changeJobAutoComment(job) || '' : '';
+}
+
+/** API datetime → value for <input type="datetime-local"> */
+function toDateTimeLocalValue(iso) {
+    if (iso == null || String(iso).trim() === '') return '';
+    const s = String(iso).trim().replace(' ', 'T');
+    return s.length >= 16 ? s.slice(0, 16) : s;
+}
+
+/** datetime-local value → API LocalDateTime string (or null if empty) */
+function fromDateTimeLocalValue(v) {
+    if (v == null || String(v).trim() === '') return null;
+    const s = String(v).trim();
+    return s.length === 16 ? `${s}:00` : s;
+}
+
+function readInsertEventComment(skill, status) {
+    if (status === 'PENDING') return null;
+    if (isTeacherExpSkill(skill)) {
+        return buildExpDeltaComment(getInsertExpSign(), val('insEvExpAmount'));
+    }
+    if (isLevelUpSkill(skill)) return LEVEL_UP_COMMENT;
+    if (isChangeJobSkill(skill)) {
+        return changeJobAutoComment(getComboValueOrNull('combo_insEvChangeJob'));
+    }
+    const comment = val('insEvComment');
+    return comment === '' ? null : comment;
+}
+
+function setGroupVisible(id, visible) {
+    const el = document.getElementById(id);
+    if (el) {
+        el.hidden = !visible;
+        if (id === 'insEvRestForm') el.style.display = visible ? '' : 'none';
+    }
+}
+
+function setCommentModeVisible(el, visible) {
+    if (!el) return;
+    el.hidden = !visible;
+    el.style.display = visible ? '' : 'none';
+}
+
+/** Exactly one comment UI (or none). Modes: none | text | exp | levelup | changejob */
+function applyInsertCommentMode(mode) {
+    const textMode = document.getElementById('insEvCommentTextMode');
+    const expRow = document.getElementById('insEvExpComment');
+    const levelUpRow = document.getElementById('insEvLevelUpComment');
+    const changeJobRow = document.getElementById('insEvChangeJobComment');
+    const commentHint = document.getElementById('insEvCommentHint');
+    const textInput = document.getElementById('insEvComment');
+
+    setCommentModeVisible(textMode, mode === 'text');
+    setCommentModeVisible(expRow, mode === 'exp');
+    setCommentModeVisible(levelUpRow, mode === 'levelup');
+    setCommentModeVisible(changeJobRow, mode === 'changejob');
+
+    if (mode !== 'text' && textInput) textInput.value = '';
+    if (mode !== 'exp') {
+        const amt = document.getElementById('insEvExpAmount');
+        if (amt) amt.value = '';
+    }
+    if (mode !== 'changejob') {
+        setComboValue('combo_insEvChangeJob', null, '');
+        const preview = document.getElementById('insEvChangeJobPreview');
+        if (preview) preview.value = '';
+    }
+
+    if (mode === 'levelup') {
+        const fixed = document.getElementById('insEvLevelUpCommentText');
+        if (fixed) {
+            fixed.value = LEVEL_UP_COMMENT;
+            fixed.readOnly = true;
+        }
+        if (commentHint) commentHint.textContent = 'Fixed locked comment for Level Up.';
+    } else if (mode === 'changejob') {
+        syncChangeJobPreview();
+        if (commentHint) commentHint.textContent = 'Pick Mage / Rogue / Paladin — comment fills automatically.';
+    } else if (mode === 'exp') {
+        if (commentHint) commentHint.textContent = 'Only + / − and EXP amount (no class picker).';
+    } else if (mode === 'text') {
+        if (commentHint) commentHint.textContent = 'Plain text comment.';
+    } else if (commentHint) {
+        commentHint.textContent = '';
+    }
+}
+
+/**
+ * Skill first, then Status.
+ * Returns which fields/modes the Event form should show.
+ */
+function resolveEventFormLayout(skill, status) {
+    const teacherExp = isTeacherExpSkill(skill);
+    const levelUp = isLevelUpSkill(skill);
+    const changeJob = isChangeJobSkill(skill);
+    const autoOnly = teacherExp || levelUp || changeJob;
+
+    let effectiveStatus = status || null;
+    if (autoOnly) effectiveStatus = 'AUTO';
+
+    const ready = !!skill && !!effectiveStatus;
+    const pending = effectiveStatus === 'PENDING';
+    const reviewed = effectiveStatus === 'APPROVED' || effectiveStatus === 'REJECTED';
+
+    // Comment mode: only one visible at a time (or none).
+    let commentMode = 'none'; // none | text | exp | levelup | changejob
+    if (ready) {
+        if (teacherExp) commentMode = 'exp';
+        else if (levelUp) commentMode = 'levelup';
+        else if (changeJob) commentMode = 'changejob';
+        else if (reviewed) commentMode = 'text';
+        // PENDING → none; AUTO never offered for normal skills
+    }
+
+    let guide = '1) Pick Skill · 2) Pick Status — then the rest of the form appears.';
+    if (!skill) {
+        guide = '1) Pick a Skill. Status options depend on the skill.';
+    } else if (!effectiveStatus) {
+        guide = '2) Pick a Status. Then the rest of the form will appear.';
+    } else if (teacherExp) {
+        guide = 'Teacher EXP (AUTO): no Caster. Set Guild, Reviewed By (teacher) and EXP amount (+/−).';
+    } else if (levelUp) {
+        guide = 'Level Up (AUTO): Caster + Guild. Comment is fixed. No reviewer / reviewed date.';
+    } else if (changeJob) {
+        guide = 'Change Job (AUTO): Caster + Guild + new job. Comment is fixed. No reviewer / reviewed date.';
+    } else if (pending) {
+        guide = 'PENDING: Caster + Guild. No comment, no reviewer, no reviewed date.';
+    } else if (reviewed) {
+        guide = `${effectiveStatus}: Caster, Guild, Reviewed By and Comment required. Reviewed At optional.`;
+    } else {
+        guide = 'Pick Status: PENDING, APPROVED or REJECTED.';
+    }
+
+    return {
+        skill,
+        status: effectiveStatus,
+        ready,
+        autoOnly,
+        teacherExp,
+        levelUp,
+        changeJob,
+        showCaster: ready && !teacherExp,
+        showReviewer: ready && (teacherExp || reviewed),
+        reviewerRequired: teacherExp || reviewed,
+        showComment: ready && commentMode !== 'none',
+        commentMode,
+        showReviewedAt: ready && reviewed,
+        statusOptions: !skill
+            ? []
+            : (autoOnly ? ['AUTO'] : ['PENDING', 'APPROVED', 'REJECTED']),
+        guide
+    };
+}
+
+function applyStatusOptions(comboId, options, preferred) {
+    const list = options || [];
+    setComboOptions(comboId, list.map(s => ({ value: s, label: s })));
+    if (!list.length) {
+        setComboValue(comboId, null, '');
+        return null;
+    }
+    if (preferred && list.includes(preferred)) {
+        setComboValue(comboId, preferred, preferred);
+        return preferred;
+    }
+    if (list.length === 1) {
+        setComboValue(comboId, list[0], list[0]);
+        return list[0];
+    }
+    const current = getComboValue(comboId);
+    if (current && list.includes(current)) return current;
+    setComboValue(comboId, null, '');
+    return null;
+}
+
+let syncingInsertEventForm = false;
+
+/** Align Insert Event fields with skill/status rules (show/hide). */
+function syncInsertEventFormUI(opts = {}) {
+    if (syncingInsertEventForm) return;
+    syncingInsertEventForm = true;
+    try {
+    const skill = skillById(getComboValueOrNull('combo_insEvSkill'));
+    let status = getComboValue('combo_insEvStatus');
+    let layout = resolveEventFormLayout(skill, status);
+
+    if (skill) {
+        status = applyStatusOptions(
+            'combo_insEvStatus',
+            layout.statusOptions,
+            layout.autoOnly ? 'AUTO' : (status && layout.statusOptions.includes(status) ? status : null)
+        );
+        layout = resolveEventFormLayout(skill, status);
+    } else {
+        applyStatusOptions('combo_insEvStatus', [], null);
+        setComboValue('combo_insEvStatus', null, '');
+        layout = resolveEventFormLayout(null, null);
+    }
+
+    if (layout.teacherExp) {
+        setComboValue('combo_insEvCaster', EMPTY_SENTINEL, '--Empty--');
+        if (opts.fromSkillChange) {
+            if (isRemoveExpSkill(skill)) setInsertExpSign('-');
+            else if (isGrantExpSkill(skill)) setInsertExpSign('+');
+        }
+    }
+    if (layout.levelUp || layout.changeJob) {
+        setComboValue('combo_insEvReviewer', EMPTY_SENTINEL, '--Empty--');
+    }
+
+    const guide = document.getElementById('insEvGuide');
+    if (guide) guide.textContent = layout.guide;
+
+    // Skill + Status always visible; rest only when both chosen.
+    setGroupVisible('insEvStatusGroup', true);
+    setGroupVisible('insEvRestForm', layout.ready);
+    const submitBtn = document.getElementById('insEvSubmit');
+    if (submitBtn) submitBtn.hidden = !layout.ready;
+
+    setGroupVisible('insEvCasterGroup', layout.showCaster);
+    setGroupVisible('insEvGuildGroup', layout.ready);
+    setGroupVisible('insEvReviewerGroup', layout.showReviewer);
+    setGroupVisible('insEvCommentGroup', layout.showComment);
+    setGroupVisible('insEvReviewedAtGroup', layout.showReviewedAt);
+    setGroupVisible('insEvTargetCharGroup', layout.ready);
+    setGroupVisible('insEvTargetPartyGroup', layout.ready);
+    setGroupVisible('insEvCreatedAtGroup', layout.ready);
+    setGroupVisible('insEvExpEconomyGroup', layout.ready && !isAutoEventSkill(skill));
+    if (!(layout.ready && !isAutoEventSkill(skill))) {
+        const skipCaster = document.getElementById('insEvSkipCasterExp');
+        const skipTarget = document.getElementById('insEvSkipTargetExp');
+        if (skipCaster) skipCaster.checked = false;
+        if (skipTarget) skipTarget.checked = false;
+    }
+
+    setLabeledRequired(document.getElementById('lblInsEvCaster'), 'Caster', layout.showCaster);
+    setLabeledRequired(document.getElementById('lblInsEvReviewer'), 'Reviewed By', layout.reviewerRequired);
+    setCommentLabelRequired(document.getElementById('lblInsEvComment'), layout.showComment);
+
+    const statusHint = document.getElementById('insEvStatusHint');
+    if (statusHint) {
+        statusHint.textContent = layout.autoOnly
+            ? 'Forced to AUTO for Level Up / Change Job / Teacher EXP.'
+            : 'PENDING / APPROVED / REJECTED (AUTO only for auto skills).';
+    }
+    const casterHint = document.getElementById('insEvCasterHint');
+    if (casterHint) casterHint.textContent = 'Character that casts the skill.';
+    const reviewerHint = document.getElementById('insEvReviewerHint');
+    if (reviewerHint) {
+        reviewerHint.textContent = layout.teacherExp
+            ? 'Teacher who cast Grant/Remove EXP.'
+            : 'Teacher who reviewed this event.';
+    }
+
+    applyInsertCommentMode(layout.showComment ? layout.commentMode : 'none');
+
+    const reviewedInput = document.getElementById('insEvReviewedAt');
+    if (reviewedInput && !layout.showReviewedAt) reviewedInput.value = '';
+    } finally {
+        syncingInsertEventForm = false;
+    }
 }
 
 function syncInsertEventCommentLabel() {
-    const status = getComboValue('combo_insEvStatus');
-    setCommentLabelRequired(
-        document.getElementById('lblInsEvComment'),
-        commentRequiredForStatus(status)
-    );
+    syncInsertEventFormUI();
 }
 
 function assertCommentForStatus(status, comment) {
     if (commentRequiredForStatus(status) && (!comment || !String(comment).trim())) {
-        notify('Comment is required when Status is APPROVED or REJECTED', 'err');
+        notify('Comment is required when Status is APPROVED, REJECTED or AUTO', 'err');
+        return false;
+    }
+    return true;
+}
+
+function assertEventFormShape(skill, status, casterId, reviewerId, comment) {
+    if (!skill) {
+        notify('Skill is required', 'err');
+        return false;
+    }
+    const layout = resolveEventFormLayout(skill, status);
+    status = layout.status;
+
+    if (layout.teacherExp) {
+        if (casterId != null) {
+            notify('Teacher EXP has no Caster (field is hidden)', 'err');
+            return false;
+        }
+        if (status !== 'AUTO') {
+            notify('Teacher EXP must use Status AUTO', 'err');
+            return false;
+        }
+        if (reviewerId == null) {
+            notify('Reviewed By (teacher) is required', 'err');
+            return false;
+        }
+        if (!parseExpDeltaComment(comment)) {
+            notify('Enter a positive EXP amount with + or −', 'err');
+            return false;
+        }
+        return true;
+    }
+
+    if (layout.showCaster && casterId == null) {
+        notify('Caster is required', 'err');
+        return false;
+    }
+
+    if (layout.levelUp || layout.changeJob) {
+        if (reviewerId != null) {
+            notify('Level Up / Change Job have no Reviewed By', 'err');
+            return false;
+        }
+        if (status !== 'AUTO') {
+            notify('This skill must use Status AUTO', 'err');
+            return false;
+        }
+        if (layout.levelUp && comment !== LEVEL_UP_COMMENT) {
+            notify('Level Up comment must be the fixed auto text', 'err');
+            return false;
+        }
+        if (layout.changeJob && !parseChangeJobTarget(comment)) {
+            notify('Pick the new job for Change Job', 'err');
+            return false;
+        }
+        return true;
+    }
+
+    if (layout.showReviewer && layout.reviewerRequired && reviewerId == null) {
+        notify('Reviewed By is required', 'err');
+        return false;
+    }
+    if (layout.showComment && (!comment || !String(comment).trim())) {
+        notify('Comment is required for this Status', 'err');
         return false;
     }
     return true;
@@ -626,12 +1167,15 @@ function configurarFormularios() {
             job: getComboValue('combo_insSkillJob'),
             aoe: getComboValue('combo_insSkillAoe'),
             exp_cost: Number(val('insSkillExpCost') || 0),
+            debuff: !!document.getElementById('insSkillDebuff')?.checked,
             description
         };
         const r = await api('/skills', { method: 'POST', body: JSON.stringify(body) });
         if (r.ok) {
             e.target.reset();
             document.getElementById('insSkillExpCost').value = 0;
+            const debuffEl = document.getElementById('insSkillDebuff');
+            if (debuffEl) debuffEl.checked = false;
             setComboValue('combo_insSkillJob', null, '');
             setComboValue('combo_insSkillLevelReq', null, '');
             setComboValue('combo_insSkillAoe', null, '');
@@ -642,32 +1186,56 @@ function configurarFormularios() {
 
     document.getElementById('formInsertEvent').addEventListener('submit', async e => {
         e.preventDefault();
-        if (!requireCombo('combo_insEvCaster', 'Caster')) return;
         if (!requireCombo('combo_insEvSkill', 'Skill')) return;
         if (!requireCombo('combo_insEvGuild', 'Guild')) return;
         if (!requireCombo('combo_insEvStatus', 'Status')) return;
-        const comment = val('insEvComment');
+        syncInsertEventFormUI();
+        const skillId = getComboValueOrNull('combo_insEvSkill');
+        const skill = skillById(skillId);
         const status = getComboValue('combo_insEvStatus');
-        if (!assertCommentForStatus(status, comment)) return;
+        const layout = resolveEventFormLayout(skill, status);
+        let casterId = getComboValueOrNull('combo_insEvCaster');
+        let reviewerId = getComboValueOrNull('combo_insEvReviewer');
+        if (!layout.showCaster) casterId = null;
+        if (!layout.showReviewer) reviewerId = null;
+        const comment = readInsertEventComment(skill, layout.status);
+        if (!assertEventFormShape(skill, layout.status, casterId, reviewerId, comment)) return;
         const body = {
-            caster_character_id: getComboValueOrNull('combo_insEvCaster'),
-            skill_id: getComboValueOrNull('combo_insEvSkill'),
+            caster_character_id: casterId,
+            skill_id: skillId,
             guild_id: getComboValueOrNull('combo_insEvGuild'),
             target_character_id: getComboValueOrNull('combo_insEvTargetChar'),
             target_party_id: getComboValueOrNull('combo_insEvTargetParty'),
-            status,
-            reviewed_by_user_id: getComboValueOrNull('combo_insEvReviewer'),
-            comment: comment === '' ? null : comment
+            status: layout.status,
+            reviewed_by_user_id: reviewerId,
+            created_at: fromDateTimeLocalValue(document.getElementById('insEvCreatedAt')?.value),
+            reviewed_at: layout.showReviewedAt
+                ? fromDateTimeLocalValue(document.getElementById('insEvReviewedAt')?.value)
+                : null,
+            comment,
+            skip_caster_exp: !!document.getElementById('insEvSkipCasterExp')?.checked,
+            skip_target_exp: !!document.getElementById('insEvSkipTargetExp')?.checked
         };
         const r = await api('/events', { method: 'POST', body: JSON.stringify(body) });
         if (r.ok) {
             e.target.reset();
             ['combo_insEvCaster', 'combo_insEvSkill', 'combo_insEvGuild', 'combo_insEvTargetChar', 'combo_insEvTargetParty', 'combo_insEvReviewer', 'combo_insEvStatus']
                 .forEach(id => setComboValue(id, null, ''));
-            syncInsertEventCommentLabel();
-            await afterMutation(cargarEvents);
+            const amt = document.getElementById('insEvExpAmount');
+            if (amt) amt.value = '';
+            const createdAt = document.getElementById('insEvCreatedAt');
+            const reviewedAt = document.getElementById('insEvReviewedAt');
+            if (createdAt) createdAt.value = '';
+            if (reviewedAt) reviewedAt.value = '';
+            const skipCaster = document.getElementById('insEvSkipCasterExp');
+            const skipTarget = document.getElementById('insEvSkipTargetExp');
+            if (skipCaster) skipCaster.checked = false;
+            if (skipTarget) skipTarget.checked = false;
+            setInsertExpSign('+');
+            syncInsertEventFormUI();
+            await afterMutation(cargarEvents, cargarCharacters);
             notify('Event created');
-        } else notify('Error creating event', 'err');
+        } else notify(r.data?.message || 'Error creating event', 'err');
     });
 
     document.getElementById('formEdit').addEventListener('submit', async e => {
@@ -675,6 +1243,9 @@ function configurarFormularios() {
         if (!editContext) return;
         const body = {};
         for (const f of editContext.fields) {
+            if (f.readOnly || String(f.key || '').startsWith('_')) continue;
+            // Event comment / datetimes are assembled after the loop.
+            if (editContext.kind === 'event' && (f.key === 'comment' || f.key === 'created_at' || f.key === 'reviewed_at')) continue;
             if (f.comboId) {
                 let v = getComboValue(f.comboId);
                 if (f.freeText && isEmptyComboValue(v)) v = combos[f.comboId]?.search.value || '';
@@ -693,6 +1264,9 @@ function configurarFormularios() {
                 }
                 if (f.optionalPassword && isEmptyComboValue(v)) continue;
                 body[f.key] = v;
+            } else if (f.type === 'checkbox') {
+                const el = document.getElementById(`edit_${f.key}`);
+                body[f.key] = !!(el && el.checked);
             } else {
                 const el = document.getElementById(`edit_${f.key}`);
                 if (!el) continue;
@@ -715,8 +1289,46 @@ function configurarFormularios() {
             }
         }
         if (editContext.kind === 'event') {
-            if (!assertCommentForStatus(body.status, body.comment)) return;
-            if (body.comment === '') body.comment = null;
+            const skill = skillById(body.skill_id);
+            const layout = resolveEventFormLayout(skill, body.status);
+            body.status = layout.status;
+            if (!layout.showCaster) body.caster_character_id = null;
+            if (!layout.showReviewer) body.reviewed_by_user_id = null;
+
+            if (!layout.showComment || body.status === 'PENDING') {
+                body.comment = null;
+            } else if (layout.commentMode === 'exp') {
+                const sign = document.getElementById('edit_exp_sign_minus')?.classList.contains('selected')
+                    ? '-'
+                    : '+';
+                const amountEl = document.getElementById('edit_exp_amount');
+                body.comment = buildExpDeltaComment(sign, amountEl?.value);
+            } else if (layout.commentMode === 'levelup') {
+                body.comment = LEVEL_UP_COMMENT;
+            } else if (layout.commentMode === 'changejob') {
+                body.comment = changeJobAutoComment(getComboValueOrNull('combo_edit_change_job_target'));
+            } else {
+                const commentEl = document.getElementById('edit_comment');
+                const raw = commentEl ? commentEl.value.trim() : '';
+                body.comment = raw === '' ? null : raw;
+            }
+            const createdEl = document.getElementById('edit_created_at');
+            const reviewedEl = document.getElementById('edit_reviewed_at');
+            body.created_at = fromDateTimeLocalValue(createdEl?.value);
+            body.reviewed_at = layout.showReviewedAt
+                ? fromDateTimeLocalValue(reviewedEl?.value)
+                : null;
+            if (!body.created_at) {
+                notify('Created At is required', 'err');
+                return;
+            }
+            if (!assertEventFormShape(
+                skill,
+                body.status,
+                body.caster_character_id ?? null,
+                body.reviewed_by_user_id ?? null,
+                body.comment
+            )) return;
         }
         const r = await api(editContext.path, { method: 'PUT', body: JSON.stringify(body) });
         if (r.ok) {
@@ -894,9 +1506,11 @@ async function cargarSkills() {
     document.getElementById('skillsBody').innerHTML = skillsCache.map(s => `
         <tr>
             <td>${s.id}</td><td>${s.name || ''}</td><td>${s.level_req ?? ''}</td><td>${s.job || ''}</td>
-            <td>${s.aoe || ''}</td><td>${s.exp_cost ?? ''}</td><td>${s.description || ''}</td>
+            <td>${s.aoe || ''}</td><td>${s.exp_cost ?? ''}</td>
+            <td>${s.debuff === true || s.debuff === 'true' || s.debuff === 1 ? 'true' : 'false'}</td>
+            <td>${s.description || ''}</td>
             <td>${acciones(`editarSkill(${s.id})`, `borrar('/skills/${s.id}', () => afterMutation(cargarSkills))`)}</td>
-        </tr>`).join('') || '<tr><td colspan="8">No data</td></tr>';
+        </tr>`).join('') || '<tr><td colspan="9">No data</td></tr>';
     reapplyFilters();
 }
 
@@ -910,6 +1524,7 @@ window.editarSkill = async function (id) {
         { key: 'job', label: 'Job', combo: true, options: jobOpts(), value: r.data.job },
         { key: 'aoe', label: 'AOE', combo: true, options: AOES.map(a => ({ value: a, label: a })), value: r.data.aoe },
         { key: 'exp_cost', label: 'Exp Cost', value: r.data.exp_cost, type: 'number', min: 0 },
+        { key: 'debuff', label: 'Debuff', type: 'checkbox', value: !!r.data.debuff },
         { key: 'description', label: 'Description', value: r.data.description || '' }
     ]);
 };
@@ -924,59 +1539,202 @@ async function cargarEvents() {
         const tChar = characterById(ev.target_character_id);
         const tParty = partyById(ev.target_party_id);
         const reviewer = userById(ev.reviewed_by_user_id);
+        const guildCell = guild
+            ? `${idName(ev.guild_id, guild.name)} · ${guildClassLabel(guild)}`
+            : idName(ev.guild_id, '?');
         return `<tr>
             <td>${ev.id}</td>
-            <td>${idName(ev.caster_character_id, caster?.name)}</td>
+            <td>${cellOrNull(ev.caster_character_id, ev.caster_character_id != null ? idName(ev.caster_character_id, caster?.name) : null)}</td>
             <td>${idName(ev.skill_id, skill?.name)}</td>
-            <td>${guild ? guildLabel(guild) : idName(ev.guild_id, '?')}</td>
+            <td>${guildCell}</td>
             <td>${cellOrNull(ev.target_character_id, ev.target_character_id != null ? idName(ev.target_character_id, tChar?.name) : null)}</td>
             <td>${cellOrNull(ev.target_party_id, ev.target_party_id != null ? idName(ev.target_party_id, tParty?.name) : null)}</td>
-            <td>${ev.status || ''}</td>
+            <td>${eventStatusLabel(ev, skill)}</td>
             <td>${cellOrNull(ev.reviewed_by_user_id, ev.reviewed_by_user_id != null ? idName(ev.reviewed_by_user_id, reviewer?.name) : null)}</td>
             <td>${ev.created_at || ''}</td>
+            <td>${cellOrNull(ev.reviewed_at)}</td>
             <td>${cellOrNull(ev.comment)}</td>
             <td>${acciones(`editarEvent(${ev.id})`, `borrar('/events/${ev.id}', () => afterMutation(cargarEvents))`)}</td>
         </tr>`;
-    }).join('') || '<tr><td colspan="11">No data</td></tr>';
+    }).join('') || '<tr><td colspan="12">No data</td></tr>';
     reapplyFilters();
 }
 
 window.editarEvent = async function (id) {
     const r = await api(`/events/${id}`);
     if (!r.ok) return notify('Not found', 'err');
+    const expParsed = parseExpDeltaComment(r.data.comment);
     abrirEdit('Edit Event', `/events/${id}`, cargarEvents, [
-        { key: 'caster_character_id', label: 'Caster', combo: true, numeric: true,
-            options: characterOpts(), value: r.data.caster_character_id },
-        { key: 'skill_id', label: 'Skill', combo: true, numeric: true,
-            options: skillOpts(), value: r.data.skill_id },
+        {
+            key: 'skill_id', label: 'Skill', combo: true, numeric: true,
+            options: skillOpts(), value: r.data.skill_id,
+            onChange: () => syncEditEventFormUI()
+        },
+        {
+            key: 'status', label: 'Status', combo: true, options: STATUSES.map(s => ({ value: s, label: s })), value: r.data.status,
+            hint: 'Skill + Status drive which fields appear.',
+            onChange: () => syncEditEventFormUI()
+        },
+        { key: 'caster_character_id', label: 'Caster', combo: true, numeric: true, allowEmpty: true, emptyLabel: '--Empty--',
+            options: characterOpts(), value: r.data.caster_character_id,
+            hint: 'Hidden for Teacher EXP.' },
         { key: 'guild_id', label: 'Guild', combo: true, numeric: true,
             options: guildOpts(), value: r.data.guild_id },
         { key: 'target_character_id', label: 'Target Character', combo: true, numeric: true, allowEmpty: true, emptyLabel: '--Empty--',
             options: characterOpts(), value: r.data.target_character_id },
         { key: 'target_party_id', label: 'Target Party', combo: true, numeric: true, allowEmpty: true, emptyLabel: '--Empty--',
             options: partyOpts(), value: r.data.target_party_id },
-        {
-            key: 'status', label: 'Status', combo: true, options: STATUSES.map(s => ({ value: s, label: s })), value: r.data.status,
-            onChange: (status) => {
-                const commentField = editContext?.fields?.find(f => f.key === 'comment');
-                const wrap = document.getElementById('edit_comment')?.closest('.form-group');
-                const commentLab = wrap?.querySelector('label');
-                const required = commentRequiredForStatus(status);
-                setCommentLabelRequired(commentLab, required);
-                if (commentField) commentField.allowEmpty = !required;
-            }
-        },
         { key: 'reviewed_by_user_id', label: 'Reviewed By (Teacher)', combo: true, numeric: true, allowEmpty: true, emptyLabel: '--Empty--',
             options: teacherOpts(), value: r.data.reviewed_by_user_id },
+        {
+            key: 'created_at',
+            label: 'Created At',
+            type: 'datetime-local',
+            value: toDateTimeLocalValue(r.data.created_at),
+            allowEmpty: false,
+            hint: 'When the event was created / requested.'
+        },
+        {
+            key: 'reviewed_at',
+            label: 'Reviewed At',
+            type: 'datetime-local',
+            value: toDateTimeLocalValue(r.data.reviewed_at),
+            allowEmpty: true,
+            hint: 'Only when APPROVED / REJECTED.'
+        },
         {
             key: 'comment',
             label: 'Comment',
             value: r.data.comment || '',
             allowEmpty: !commentRequiredForStatus(r.data.status),
-            hint: 'Required when Status is APPROVED or REJECTED'
+            expMode: isTeacherExpSkill(skillById(r.data.skill_id)),
+            levelUpMode: isLevelUpSkill(skillById(r.data.skill_id)),
+            changeJobMode: isChangeJobSkill(skillById(r.data.skill_id)),
+            changeJobTarget: parseChangeJobTarget(r.data.comment),
+            expSign: expParsed?.sign || (isRemoveExpSkill(skillById(r.data.skill_id)) ? '-' : '+'),
+            expAmount: expParsed?.amount ?? '',
+            hint: 'Mode depends on Skill + Status.'
         }
     ], 'event');
+    syncEditEventFormUI();
 };
+
+function syncEditEventFormUI() {
+    if (!editContext || editContext.kind !== 'event') return;
+    const skillField = editContext.fields.find(f => f.key === 'skill_id');
+    const statusField = editContext.fields.find(f => f.key === 'status');
+    const casterField = editContext.fields.find(f => f.key === 'caster_character_id');
+    const reviewerField = editContext.fields.find(f => f.key === 'reviewed_by_user_id');
+    const commentField = editContext.fields.find(f => f.key === 'comment');
+    const reviewedField = editContext.fields.find(f => f.key === 'reviewed_at');
+
+    const skillId = skillField?.comboId ? getComboValueOrNull(skillField.comboId) : null;
+    const skill = skillById(skillId);
+    let status = statusField?.comboId ? getComboValue(statusField.comboId) : null;
+    let layout = resolveEventFormLayout(skill, status);
+
+    if (statusField?.comboId && skill) {
+        status = applyStatusOptions(statusField.comboId, layout.statusOptions, layout.autoOnly ? 'AUTO' : status);
+        layout = resolveEventFormLayout(skill, status);
+        // restore onChange after setComboOptions
+        if (typeof statusField.onChange === 'function') {
+            combos[statusField.comboId].onChange = statusField.onChange;
+        }
+    }
+
+    if (layout.teacherExp && casterField?.comboId) {
+        setComboValue(casterField.comboId, EMPTY_SENTINEL, '--Empty--');
+    }
+    if ((layout.levelUp || layout.changeJob) && reviewerField?.comboId) {
+        setComboValue(reviewerField.comboId, EMPTY_SENTINEL, '--Empty--');
+    }
+
+    const setWrapVisible = (field, visible) => {
+        if (!field) return;
+        const host = field.comboId
+            ? document.getElementById(field.comboId)
+            : document.getElementById(`edit_${field.key}`);
+        const wrap = host?.closest('.form-group') || (field.key === 'comment' ? document.getElementById('edit_comment_wrap') : null);
+        if (wrap) wrap.hidden = !visible;
+    };
+
+    setWrapVisible(casterField, layout.showCaster);
+    setWrapVisible(reviewerField, layout.showReviewer);
+    setWrapVisible(commentField, layout.showComment);
+    setWrapVisible(reviewedField, layout.showReviewedAt);
+
+    if (casterField) {
+        const lab = document.querySelector(`#${casterField.comboId}`)?.closest('.form-group')?.querySelector('label');
+        setLabeledRequired(lab, 'Caster', layout.showCaster);
+    }
+    if (reviewerField) {
+        const lab = document.querySelector(`#${reviewerField.comboId}`)?.closest('.form-group')?.querySelector('label');
+        setLabeledRequired(lab, 'Reviewed By (Teacher)', layout.reviewerRequired);
+        reviewerField.allowEmpty = !layout.reviewerRequired;
+    }
+    if (commentField) commentField.allowEmpty = !layout.showComment;
+
+    const textInput = document.getElementById('edit_comment');
+    const expRow = document.getElementById('edit_exp_comment');
+    const levelUpRow = document.getElementById('edit_levelup_comment');
+    const changeJobRow = document.getElementById('edit_changejob_comment');
+    const textModeEl = document.getElementById('edit_comment_text_mode');
+
+    const mode = layout.showComment ? layout.commentMode : 'none';
+    setCommentModeVisible(textModeEl, mode === 'text');
+    setCommentModeVisible(expRow, mode === 'exp');
+    setCommentModeVisible(levelUpRow, mode === 'levelup');
+    setCommentModeVisible(changeJobRow, mode === 'changejob');
+
+    if (mode !== 'text' && textInput) textInput.value = '';
+    if (mode !== 'exp') {
+        const amt = document.getElementById('edit_exp_amount');
+        if (amt) amt.value = '';
+    }
+    if (mode !== 'changejob') {
+        setComboValue('combo_edit_change_job_target', null, '');
+        const preview = document.getElementById('edit_changejob_preview');
+        if (preview) preview.value = '';
+    }
+
+    if (mode === 'levelup') {
+        const fixed = document.getElementById('edit_levelup_comment_text');
+        if (fixed) {
+            fixed.value = LEVEL_UP_COMMENT;
+            fixed.readOnly = true;
+        }
+    } else if (mode === 'changejob') {
+        const preview = document.getElementById('edit_changejob_preview');
+        const job = getComboValueOrNull('combo_edit_change_job_target');
+        if (preview) preview.value = job ? changeJobAutoComment(job) || '' : '';
+    } else if (mode === 'exp') {
+        const minus = document.getElementById('edit_exp_sign_minus');
+        const plus = document.getElementById('edit_exp_sign_plus');
+        const preferred = isRemoveExpSkill(skill) ? '-' : (isGrantExpSkill(skill) ? '+' : null);
+        if (preferred === '-' && minus) {
+            minus.classList.add('selected');
+            plus?.classList.remove('selected');
+        } else if (preferred === '+' && plus) {
+            plus.classList.add('selected');
+            minus?.classList.remove('selected');
+        }
+    } else if (mode === 'text' && textInput) {
+        textInput.readOnly = false;
+        textInput.placeholder = 'Write comment...';
+    }
+
+    const reviewedInput = document.getElementById('edit_reviewed_at');
+    if (reviewedInput && !layout.showReviewedAt) reviewedInput.value = '';
+
+    let guide = document.getElementById('editEvGuide');
+    if (!guide) {
+        guide = document.createElement('p');
+        guide.id = 'editEvGuide';
+        guide.className = 'event-form-guide';
+        document.getElementById('editFields')?.prepend(guide);
+    }
+    guide.textContent = layout.guide;
+}
 
 function fieldLabelHtml(f) {
     const required = !f.allowEmpty && !f.optionalPassword;
@@ -1028,13 +1786,78 @@ function abrirEdit(title, path, reload, fields, kind = null) {
                 combos[comboId].onChange = f.onChange;
             }
         } else {
-            const t = f.type === 'password' ? 'password' : (f.type === 'number' ? 'number' : 'text');
+            const t = f.type === 'password'
+                ? 'password'
+                : (f.type === 'number' ? 'number' : (f.type === 'datetime-local' ? 'datetime-local' : 'text'));
             const min = f.type === 'number' ? (f.min != null ? f.min : (/exp/i.test(f.key) ? 0 : 1)) : null;
             const minAttr = min != null ? ` min="${min}"` : '';
             const wrap = document.createElement('div');
             wrap.className = 'form-group';
-            wrap.innerHTML = `<label>${fieldLabelHtml(f)}</label>
-                <input type="${t}" id="edit_${f.key}" value="${f.value ?? ''}"${minAttr}>`;
+            if (f.key === 'comment') wrap.id = 'edit_comment_wrap';
+            wrap.innerHTML = `<label>${fieldLabelHtml(f)}</label>`;
+            if (f.type === 'checkbox') {
+                wrap.innerHTML = `<label>${fieldLabelHtml(f)}</label>
+                <label class="check-label"><input type="checkbox" id="edit_${f.key}"${f.value ? ' checked' : ''}> Debuff (hostile)</label>`;
+                if (f.hint) {
+                    const hint = document.createElement('small');
+                    hint.className = 'field-hint';
+                    hint.textContent = f.hint;
+                    wrap.appendChild(hint);
+                }
+                box.appendChild(wrap);
+                editContext.fields.push(f);
+                return;
+            }
+            if (f.key === 'comment') {
+                const textMode = document.createElement('div');
+                textMode.id = 'edit_comment_text_mode';
+                textMode.className = 'comment-mode';
+                textMode.innerHTML = `<input type="text" id="edit_comment" value="${f.value ?? ''}" placeholder="Write comment..." autocomplete="off">`;
+                wrap.appendChild(textMode);
+
+                const expRow = document.createElement('div');
+                expRow.id = 'edit_exp_comment';
+                expRow.className = 'comment-mode exp-comment-row';
+                expRow.hidden = true;
+                const sign = f.expSign === '-' ? '-' : '+';
+                expRow.innerHTML = `
+                    <div class="exp-sign-toggle" role="group" aria-label="EXP sign">
+                        <button type="button" id="edit_exp_sign_plus" class="exp-sign${sign === '+' ? ' selected' : ''}" data-sign="+">+</button>
+                        <button type="button" id="edit_exp_sign_minus" class="exp-sign${sign === '-' ? ' selected' : ''}" data-sign="-">−</button>
+                    </div>
+                    <input type="number" id="edit_exp_amount" class="edit-exp-amount" min="1" step="1" placeholder="EXP amount" value="${f.expAmount ?? ''}">
+                `;
+                wrap.appendChild(expRow);
+
+                const levelUpRow = document.createElement('div');
+                levelUpRow.id = 'edit_levelup_comment';
+                levelUpRow.className = 'comment-mode';
+                levelUpRow.hidden = true;
+                levelUpRow.innerHTML = `<input type="text" id="edit_levelup_comment_text" readonly value="${LEVEL_UP_COMMENT}">`;
+                wrap.appendChild(levelUpRow);
+
+                const changeJobRow = document.createElement('div');
+                changeJobRow.id = 'edit_changejob_comment';
+                changeJobRow.className = 'comment-mode';
+                changeJobRow.hidden = true;
+                const jobLabel = document.createElement('label');
+                jobLabel.className = 'field-sublabel';
+                jobLabel.textContent = 'New job';
+                changeJobRow.appendChild(jobLabel);
+                const jobHost = document.createElement('div');
+                jobHost.id = 'combo_edit_change_job_target';
+                changeJobRow.appendChild(jobHost);
+                const preview = document.createElement('input');
+                preview.type = 'text';
+                preview.id = 'edit_changejob_preview';
+                preview.readOnly = true;
+                preview.placeholder = 'Comment preview';
+                changeJobRow.appendChild(preview);
+                wrap.appendChild(changeJobRow);
+            } else {
+                wrap.innerHTML = `<label>${fieldLabelHtml(f)}</label>
+                <input type="${t}" id="edit_${f.key}" value="${f.value ?? ''}"${minAttr}${f.readOnly ? ' readonly' : ''}>`;
+            }
             if (f.hint) {
                 const hint = document.createElement('small');
                 hint.className = 'field-hint';
@@ -1043,6 +1866,28 @@ function abrirEdit(title, path, reload, fields, kind = null) {
             }
             box.appendChild(wrap);
             editContext.fields.push(f);
+            if (f.key === 'comment') {
+                const setEditSign = (s) => {
+                    document.getElementById('edit_exp_sign_plus')?.classList.toggle('selected', s === '+');
+                    document.getElementById('edit_exp_sign_minus')?.classList.toggle('selected', s === '-');
+                };
+                document.getElementById('edit_exp_sign_plus')?.addEventListener('click', () => setEditSign('+'));
+                document.getElementById('edit_exp_sign_minus')?.addEventListener('click', () => setEditSign('-'));
+                createCombo('combo_edit_change_job_target');
+                setComboOptions('combo_edit_change_job_target', CHARACTER_JOBS.map(j => ({ value: j, label: j })));
+                if (f.changeJobTarget) {
+                    setComboValue('combo_edit_change_job_target', f.changeJobTarget, f.changeJobTarget);
+                }
+                const syncPreview = () => {
+                    const job = getComboValueOrNull('combo_edit_change_job_target');
+                    const preview = document.getElementById('edit_changejob_preview');
+                    if (preview) preview.value = job ? changeJobAutoComment(job) || '' : '';
+                };
+                if (combos.combo_edit_change_job_target) {
+                    combos.combo_edit_change_job_target.onChange = syncPreview;
+                }
+                syncPreview();
+            }
         }
     });
 

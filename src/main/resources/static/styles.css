@@ -67,6 +67,25 @@ th, td {
     font-size: 14px;
 }
 th { background: #333; color: #fff; }
+th.sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+th.sortable:hover { background: #444; }
+th.sortable::after {
+    content: ' \2195';
+    font-size: 11px;
+    opacity: 0.45;
+}
+th.sortable.sort-asc::after {
+    content: ' \2191';
+    opacity: 1;
+}
+th.sortable.sort-desc::after {
+    content: ' \2193';
+    opacity: 1;
+}
 tr:nth-child(even) { background: #f7f7f7; }
 tr.filtered-out { display: none; }
 .formulario-container {
@@ -228,4 +247,85 @@ button:hover { background: #555; }
     margin-top: 4px;
     font-size: 12px;
     color: #666;
+}
+.check-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+}
+#insEvExpEconomyGroup .check-label {
+    display: flex;
+    margin-top: 6px;
+}
+.check-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+}
+.exp-comment-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.comment-mode[hidden] {
+    display: none !important;
+}
+#edit_exp_comment.comment-mode:not([hidden]),
+#insEvExpComment.comment-mode:not([hidden]) {
+    display: flex;
+}
+.field-sublabel {
+    display: block;
+    font-size: 12px;
+    color: #555;
+    margin-bottom: 4px;
+}
+.exp-sign-toggle {
+    display: inline-flex;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    overflow: hidden;
+}
+.exp-sign {
+    border: none;
+    background: #f3f4f6;
+    color: #111;
+    min-width: 40px;
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 700;
+}
+.exp-sign.selected {
+    background: #2563eb;
+    color: #fff;
+}
+.exp-sign[data-sign="-"].selected {
+    background: #dc2626;
+}
+#insEvExpAmount,
+input.edit-exp-amount {
+    width: 140px;
+    max-width: 100%;
+}
+.field-disabled {
+    opacity: 0.65;
+}
+.field-disabled input:disabled {
+    cursor: not-allowed;
+    background: #f3f4f6;
+}
+.event-form-guide {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 6px;
+    color: #1e3a8a;
+    font-size: 13px;
+    line-height: 1.4;
 }

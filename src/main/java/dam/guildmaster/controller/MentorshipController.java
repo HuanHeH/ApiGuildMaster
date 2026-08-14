@@ -1,70 +1,54 @@
 package dam.guildmaster.controller;
 
 import dam.guildmaster.entity.Mentorship;
-import dam.guildmaster.repository.MentorshipRepository;
-import org.springframework.http.HttpStatus;
+import dam.guildmaster.security.AccessService;
+import dam.guildmaster.security.AuthUser;
+import dam.guildmaster.service.MentorshipService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/mentorships")
 public class MentorshipController {
 
-    private final MentorshipRepository mentorshipRepository;
+    private final MentorshipService mentorshipService;
+    private final AccessService accessService;
 
-    public MentorshipController(MentorshipRepository mentorshipRepository) {
-        this.mentorshipRepository = mentorshipRepository;
+    public MentorshipController(MentorshipService mentorshipService, AccessService accessService) {
+        this.mentorshipService = mentorshipService;
+        this.accessService = accessService;
     }
 
     @GetMapping
-    public List<Mentorship> getAll() {
-        return mentorshipRepository.findAll();
+    public ResponseEntity<?> getAll() {
+        AuthUser me = accessService.requireUser();
+        return mentorshipService.findAll(me);
     }
 
     @GetMapping("/{userId}/{guildId}")
-    public ResponseEntity<Mentorship> getById(@PathVariable Integer userId, @PathVariable Integer guildId) {
-        return mentorshipRepository.findById(new Mentorship.MentorshipId(userId, guildId))
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<?> getById(@PathVariable Integer userId, @PathVariable Integer guildId) {
+        AuthUser me = accessService.requireUser();
+        return mentorshipService.findById(me, userId, guildId);
     }
 
     @PostMapping
-    public ResponseEntity<Mentorship> create(@RequestBody Mentorship mentorship) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(mentorshipRepository.save(mentorship));
+    public ResponseEntity<?> create(@RequestBody Mentorship mentorship) {
+        accessService.requireAdmin();
+        return mentorshipService.create(mentorship);
     }
 
     @PutMapping("/{userId}/{guildId}")
-    public ResponseEntity<Mentorship> update(
+    public ResponseEntity<?> update(
             @PathVariable Integer userId,
             @PathVariable Integer guildId,
             @RequestBody Mentorship data) {
-        Mentorship.MentorshipId oldId = new Mentorship.MentorshipId(userId, guildId);
-        if (!mentorshipRepository.existsById(oldId)) {
-            return ResponseEntity.notFound().build();
-        }
-
-        Integer newUserId = data.getUserId() != null ? data.getUserId() : userId;
-        Integer newGuildId = data.getGuildId() != null ? data.getGuildId() : guildId;
-
-        if (!oldId.equals(new Mentorship.MentorshipId(newUserId, newGuildId))) {
-            mentorshipRepository.deleteById(oldId);
-        }
-
-        Mentorship updated = new Mentorship();
-        updated.setUserId(newUserId);
-        updated.setGuildId(newGuildId);
-        return ResponseEntity.ok(mentorshipRepository.save(updated));
+        accessService.requireAdmin();
+        return mentorshipService.update(userId, guildId, data);
     }
 
     @DeleteMapping("/{userId}/{guildId}")
-    public ResponseEntity<Void> delete(@PathVariable Integer userId, @PathVariable Integer guildId) {
-        Mentorship.MentorshipId id = new Mentorship.MentorshipId(userId, guildId);
-        if (!mentorshipRepository.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        mentorshipRepository.deleteById(id);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<?> delete(@PathVariable Integer userId, @PathVariable Integer guildId) {
+        accessService.requireAdmin();
+        return mentorshipService.delete(userId, guildId);
     }
 }

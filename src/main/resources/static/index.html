@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>GuildMaster - Admin</title>
-    <link rel="stylesheet" href="/styles.css?v=20260723b" />
+    <link rel="stylesheet" href="/styles.css?v=20260806n" />
 </head>
 <body>
 <div id="authGuard" class="auth-guard" style="display:none;">
@@ -164,7 +164,7 @@
         <div class="table-wrap" data-table="skillsBody">
             <input class="table-filter" type="search" placeholder="Filter table (all fields)...">
             <table>
-                <thead><tr><th>ID</th><th>Name</th><th>Level Req</th><th>Job</th><th>AOE</th><th>Exp Cost</th><th>Description</th><th>Actions</th></tr></thead>
+                <thead><tr><th>ID</th><th>Name</th><th>Level Req</th><th>Job</th><th>AOE</th><th>Exp Cost</th><th>Debuff</th><th>Description</th><th>Actions</th></tr></thead>
                 <tbody id="skillsBody"></tbody>
             </table>
             <input class="table-filter below" type="search" placeholder="Filter table (all fields)...">
@@ -178,6 +178,9 @@
                     <div class="form-group"><label>Job<span class="req">*</span></label><div id="combo_insSkillJob"></div></div>
                     <div class="form-group"><label>AOE<span class="req">*</span></label><div id="combo_insSkillAoe"></div></div>
                     <div class="form-group"><label>Exp Cost<span class="req">*</span></label><input type="number" id="insSkillExpCost" min="0" value="0" required></div>
+                    <div class="form-group"><label>Debuff</label>
+                        <label class="check-label"><input type="checkbox" id="insSkillDebuff"> Debuff (hostile)</label>
+                    </div>
                     <div class="form-group"><label>Description<span class="req">*</span></label><input id="insSkillDesc" required></div>
                 </div>
                 <button type="submit">Insert</button>
@@ -194,7 +197,7 @@
                 <thead>
                 <tr>
                     <th>ID</th><th>Caster</th><th>Skill</th><th>Guild</th><th>Target Char</th><th>Target Party</th>
-                    <th>Status</th><th>Reviewed By</th><th>Created</th><th>Comment</th><th>Actions</th>
+                    <th>Status</th><th>Reviewed By</th><th>Created</th><th>Reviewed At</th><th>Comment</th><th>Actions</th>
                 </tr>
                 </thead>
                 <tbody id="eventsBody"></tbody>
@@ -203,22 +206,95 @@
         </div>
         <div class="formulario-container">
             <h3>Insert Event</h3>
+            <p id="insEvGuide" class="event-form-guide">1) Pick Skill · 2) Pick Status — then the rest of the form appears.</p>
             <form id="formInsertEvent">
                 <div class="grid-2">
-                    <div class="form-group"><label>Caster<span class="req">*</span></label><div id="combo_insEvCaster"></div></div>
                     <div class="form-group"><label>Skill<span class="req">*</span></label><div id="combo_insEvSkill"></div></div>
-                    <div class="form-group"><label>Guild<span class="req">*</span></label><div id="combo_insEvGuild"></div></div>
-                    <div class="form-group"><label>Target Character</label><div id="combo_insEvTargetChar"></div></div>
-                    <div class="form-group"><label>Target Party</label><div id="combo_insEvTargetParty"></div></div>
-                    <div class="form-group"><label>Status<span class="req">*</span></label><div id="combo_insEvStatus"></div></div>
-                    <div class="form-group"><label>Reviewed By</label><div id="combo_insEvReviewer"></div></div>
-                    <div class="form-group">
-                        <label id="lblInsEvComment">Comment</label>
-                        <input id="insEvComment">
-                        <small class="field-hint">Required when Status is APPROVED or REJECTED; optional if PENDING</small>
+                    <div class="form-group" id="insEvStatusGroup">
+                        <label>Status<span class="req">*</span></label>
+                        <div id="combo_insEvStatus"></div>
+                        <small class="field-hint" id="insEvStatusHint">Choose skill first. Some skills force AUTO.</small>
                     </div>
                 </div>
-                <button type="submit">Insert</button>
+
+                <div id="insEvRestForm" class="grid-2" hidden>
+                    <div class="form-group" id="insEvCasterGroup">
+                        <label id="lblInsEvCaster">Caster<span class="req">*</span></label>
+                        <div id="combo_insEvCaster"></div>
+                        <small class="field-hint" id="insEvCasterHint">Character that casts the skill.</small>
+                    </div>
+
+                    <div class="form-group" id="insEvGuildGroup">
+                        <label>Guild<span class="req">*</span></label>
+                        <div id="combo_insEvGuild"></div>
+                    </div>
+
+                    <div class="form-group" id="insEvTargetCharGroup">
+                        <label>Target Character</label>
+                        <div id="combo_insEvTargetChar"></div>
+                    </div>
+                    <div class="form-group" id="insEvTargetPartyGroup">
+                        <label>Target Party</label>
+                        <div id="combo_insEvTargetParty"></div>
+                    </div>
+
+                    <div class="form-group" id="insEvReviewerGroup">
+                        <label id="lblInsEvReviewer">Reviewed By<span class="req">*</span></label>
+                        <div id="combo_insEvReviewer"></div>
+                        <small class="field-hint" id="insEvReviewerHint"></small>
+                    </div>
+
+                    <div class="form-group" id="insEvCommentGroup">
+                        <label id="lblInsEvComment">Comment<span class="req">*</span></label>
+
+                        <!-- APPROVED / REJECTED / generic AUTO: plain text -->
+                        <div id="insEvCommentTextMode" class="comment-mode" hidden>
+                            <input id="insEvComment" type="text" autocomplete="off" placeholder="Write comment...">
+                        </div>
+
+                        <!-- Teacher Grant/Remove EXP: +/- and amount only -->
+                        <div id="insEvExpComment" class="comment-mode exp-comment-row" hidden>
+                            <div class="exp-sign-toggle" role="group" aria-label="EXP sign">
+                                <button type="button" id="insEvExpSignPlus" class="exp-sign selected" data-sign="+">+</button>
+                                <button type="button" id="insEvExpSignMinus" class="exp-sign" data-sign="-">−</button>
+                            </div>
+                            <input type="number" id="insEvExpAmount" min="1" step="1" placeholder="EXP amount">
+                        </div>
+
+                        <!-- Level Up: locked fixed comment -->
+                        <div id="insEvLevelUpComment" class="comment-mode" hidden>
+                            <input id="insEvLevelUpCommentText" type="text" readonly value="Auto-applied level up (no teacher review)">
+                        </div>
+
+                        <!-- Change Job: class picker only (+ locked preview) -->
+                        <div id="insEvChangeJobComment" class="comment-mode" hidden>
+                            <label class="field-sublabel">New job</label>
+                            <div id="combo_insEvChangeJob"></div>
+                            <input id="insEvChangeJobPreview" type="text" readonly placeholder="Comment preview">
+                        </div>
+
+                        <small class="field-hint" id="insEvCommentHint"></small>
+                    </div>
+
+                    <div class="form-group" id="insEvCreatedAtGroup">
+                        <label>Created At</label>
+                        <input type="datetime-local" id="insEvCreatedAt">
+                        <small class="field-hint">Optional. Empty = now.</small>
+                    </div>
+                    <div class="form-group" id="insEvReviewedAtGroup">
+                        <label>Reviewed At</label>
+                        <input type="datetime-local" id="insEvReviewedAt">
+                        <small class="field-hint" id="insEvReviewedAtHint">Only when APPROVED / REJECTED.</small>
+                    </div>
+
+                    <div class="form-group" id="insEvExpEconomyGroup" style="grid-column: 1 / -1;">
+                        <label>EXP economy (Admin overrides)</label>
+                        <label class="check-label"><input type="checkbox" id="insEvSkipCasterExp"> No caster EXP change</label>
+                        <label class="check-label"><input type="checkbox" id="insEvSkipTargetExp"> No target EXP change (debuff gift)</label>
+                        <small class="field-hint">Only for non-AUTO skills. Default: caster pays ExpCost on create; debuff targets get ExpCost/2 only when APPROVED. Checked = that side stays 0.</small>
+                    </div>
+                </div>
+                <button type="submit" id="insEvSubmit" hidden>Insert</button>
             </form>
         </div>
     </div>
@@ -236,6 +312,6 @@
     </div>
 </div>
 
-<script src="/script.js?v=20260723b"></script>
+<script src="/script.js?v=20260806o"></script>
 </body>
 </html>

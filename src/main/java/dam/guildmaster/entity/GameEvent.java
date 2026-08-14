@@ -13,7 +13,7 @@ public class GameEvent {
     @Column(name = "ID")
     private Integer id;
 
-    @Column(name = "CasterCharacterID", nullable = false)
+    @Column(name = "CasterCharacterID")
     private Integer casterCharacterId;
 
     @Column(name = "SkillID", nullable = false)
@@ -38,8 +38,20 @@ public class GameEvent {
     @Column(name = "CreatedAt", nullable = false)
     private LocalDateTime createdAt;
 
+    @Column(name = "ReviewedAt")
+    private LocalDateTime reviewedAt;
+
     @Column(name = "Comment", columnDefinition = "TEXT")
     private String comment;
+
+    /**
+     * Admin-only create flags (not persisted). When true, that side of EXP economy is skipped.
+     */
+    @Transient
+    private Boolean skipCasterExp;
+
+    @Transient
+    private Boolean skipTargetExp;
 
     @PrePersist
     public void prePersist() {
@@ -80,6 +92,15 @@ public class GameEvent {
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 
+    public LocalDateTime getReviewedAt() { return reviewedAt; }
+    public void setReviewedAt(LocalDateTime reviewedAt) { this.reviewedAt = reviewedAt; }
+
     public String getComment() { return comment; }
     public void setComment(String comment) { this.comment = comment; }
+
+    public Boolean getSkipCasterExp() { return skipCasterExp; }
+    public void setSkipCasterExp(Boolean skipCasterExp) { this.skipCasterExp = skipCasterExp; }
+
+    public Boolean getSkipTargetExp() { return skipTargetExp; }
+    public void setSkipTargetExp(Boolean skipTargetExp) { this.skipTargetExp = skipTargetExp; }
 }

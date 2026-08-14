@@ -4,12 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>GuildMaster - Login</title>
-    <link rel="stylesheet" href="/styles.css?v=20260722d" />
+    <link rel="stylesheet" href="/styles.css?v=20260723c" />
 </head>
 <body class="login-page">
 <div class="login-card">
     <h1>GuildMaster</h1>
-    <p class="subtitle">Admin access</p>
+    <p class="subtitle">Sign in (JWT · 16h max · 30 min idle)</p>
     <form id="formLogin">
         <div class="form-group">
             <label for="loginMail">Mail</label>
@@ -24,9 +24,10 @@
     <div id="loginError" class="auth-error"></div>
 </div>
 <script>
-    const AUTH_KEY = 'gm_admin_auth';
+    const AUTH_KEY = 'gm_auth';
     if (sessionStorage.getItem(AUTH_KEY)) {
-        window.location.href = '/index.html';
+        const s = JSON.parse(sessionStorage.getItem(AUTH_KEY));
+        window.location.href = s.role === 'Admin' ? '/index.html' : '/index.html';
     }
 
     document.getElementById('formLogin').addEventListener('submit', async (e) => {
@@ -50,7 +51,7 @@
 
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-            box.textContent = data.message || 'Invalid credentials or user is not Admin';
+            box.textContent = data.message || 'Invalid credentials';
             box.style.display = 'block';
             return;
         }
@@ -59,8 +60,15 @@
             id: data.id,
             name: data.name,
             mail: data.mail,
-            role: data.role
+            role: data.role,
+            access_token: data.access_token
         }));
+
+        if (data.role !== 'Admin') {
+            box.textContent = 'Logged in as ' + data.role + '. Admin panel is Admin-only for now; keep your token for API clients.';
+            box.style.display = 'block';
+            return;
+        }
         window.location.href = '/index.html';
     });
 </script>

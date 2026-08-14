@@ -1,86 +1,56 @@
 package dam.guildmaster.controller;
 
 import dam.guildmaster.entity.GameCharacter;
-import dam.guildmaster.repository.CharacterRepository;
-import org.springframework.http.HttpStatus;
+import dam.guildmaster.entity.Skill;
+import dam.guildmaster.security.AccessService;
+import dam.guildmaster.security.AuthUser;
+import dam.guildmaster.service.CharacterService;
+import dam.guildmaster.service.SkillService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.Map;
 
 @RestController
 @RequestMapping("/api/characters")
 public class CharacterController {
 
-    private final CharacterRepository characterRepository;
+    private final CharacterService characterService;
+    private final AccessService accessService;
 
-    public CharacterController(CharacterRepository characterRepository) {
-        this.characterRepository = characterRepository;
+    public CharacterController(CharacterService characterService, AccessService accessService) {
+        this.characterService = characterService;
+        this.accessService = accessService;
     }
 
     @GetMapping
-    public List<GameCharacter> getAll() {
-        return characterRepository.findAll();
+    public ResponseEntity<?> getAll(@RequestParam(value = "guild_id", required = false) Integer guildId) {
+        AuthUser me = accessService.requireUser();
+        return ResponseEntity.ok(characterService.findAll(me, guildId));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<GameCharacter> getById(@PathVariable Integer id) {
-        return characterRepository.findById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<?> getById(@PathVariable Integer id,
+                                     @RequestParam(value = "guild_id", required = false) Integer guildId) {
+        AuthUser me = accessService.requireUser();
+        return characterService.findById(me, id, guildId);
     }
 
     @PostMapping
-    public ResponseEntity<GameCharacter> create(@RequestBody GameCharacter character) {
-        character.setId(null);
-        // Party is optional
-        if (character.getPartyId() != null && character.getPartyId() <= 0) {
-            character.setPartyId(null);
-        }
-        return ResponseEntity.status(HttpStatus.CREATED).body(characterRepository.save(character));
+    public ResponseEntity<?> create(@RequestBody GameCharacter character) {
+        AuthUser me = accessService.requireUser();
+        return characterService.create(me, character);
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Integer id, @RequestBody Map<String, Object> data) {
-        return characterRepository.findById(id).<ResponseEntity<?>>map(character -> {
-            if (data.containsKey("name") && data.get("name") != null) {
-                character.setName(String.valueOf(data.get("name")));
-            }
-            if (data.containsKey("job") && data.get("job") != null) {
-                character.setJob(String.valueOf(data.get("job")));
-            }
-            if (data.containsKey("level") && data.get("level") != null) {
-                character.setLevel(((Number) data.get("level")).intValue());
-            }
-            if (data.containsKey("exp") && data.get("exp") != null) {
-                character.setExp(((Number) data.get("exp")).intValue());
-            }
-            if (data.containsKey("user_id") && data.get("user_id") != null) {
-                character.setUserId(((Number) data.get("user_id")).intValue());
-            }
-            if (data.containsKey("guild_id") && data.get("guild_id") != null) {
-                character.setGuildId(((Number) data.get("guild_id")).intValue());
-            }
-            // Party optional: key present with null → clear FK to NULL
-            if (data.containsKey("party_id")) {
-                Object party = data.get("party_id");
-                if (party == null || "".equals(String.valueOf(party).trim())) {
-                    character.setPartyId(null);
-                } else {
-                    character.setPartyId(((Number) party).intValue());
-                }
-            }
-            return ResponseEntity.ok(characterRepository.save(character));
-        }).orElse(ResponseEntity.notFound().build());
+        AuthUser me = accessService.requireUser();
+        return characterService.update(me, id, data);
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Integer id) {
-        if (!characterRepository.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        characterRepository.deleteById(id);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<?> delete(@PathVariable Integer id) {
+        AuthUser me = accessService.requireUser();
+        return characterService.delete(me, id);
     }
 }

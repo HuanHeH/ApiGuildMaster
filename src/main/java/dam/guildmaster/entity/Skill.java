@@ -31,6 +31,10 @@ public class Skill {
     @Column(name = "ExpCost", nullable = false)
     private Integer expCost;
 
+    /** True = debuff / hostile skill (flag for future C5c / caps logic). */
+    @Column(name = "Debuff", nullable = false)
+    private Boolean debuff = false;
+
     public Skill() {}
 
     public Integer getId() { return id; }
@@ -53,4 +57,7 @@ public class Skill {
 
     public Integer getExpCost() { return expCost; }
     public void setExpCost(Integer expCost) { this.expCost = expCost; }
+
+    public Boolean getDebuff() { return debuff; }
+    public void setDebuff(Boolean debuff) { this.debuff = debuff; }
 }

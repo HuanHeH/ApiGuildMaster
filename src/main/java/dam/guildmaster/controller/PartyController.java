@@ -1,56 +1,52 @@
 package dam.guildmaster.controller;
 
 import dam.guildmaster.entity.Party;
-import dam.guildmaster.repository.PartyRepository;
-import org.springframework.http.HttpStatus;
+import dam.guildmaster.security.AccessService;
+import dam.guildmaster.security.AuthUser;
+import dam.guildmaster.service.PartyService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/parties")
 public class PartyController {
 
-    private final PartyRepository partyRepository;
+    private final PartyService partyService;
+    private final AccessService accessService;
 
-    public PartyController(PartyRepository partyRepository) {
-        this.partyRepository = partyRepository;
+    public PartyController(PartyService partyService, AccessService accessService) {
+        this.partyService = partyService;
+        this.accessService = accessService;
     }
 
     @GetMapping
-    public List<Party> getAll() {
-        return partyRepository.findAll();
+    public ResponseEntity<?> getAll(@RequestParam(value = "guild_id", required = false) Integer guildId) {
+        AuthUser me = accessService.requireUser();
+        return ResponseEntity.ok(partyService.findAll(me, guildId));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Party> getById(@PathVariable Integer id) {
-        return partyRepository.findById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<?> getById(@PathVariable Integer id,
+                                     @RequestParam(value = "guild_id", required = false) Integer guildId) {
+        AuthUser me = accessService.requireUser();
+        return partyService.findById(me, id, guildId);
     }
 
     @PostMapping
-    public ResponseEntity<Party> create(@RequestBody Party party) {
-        party.setId(null);
-        return ResponseEntity.status(HttpStatus.CREATED).body(partyRepository.save(party));
+    public ResponseEntity<?> create(@RequestBody Party party) {
+        accessService.requireAdmin();
+        return partyService.create(party);
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Party> update(@PathVariable Integer id, @RequestBody Party data) {
-        return partyRepository.findById(id).map(party -> {
-            if (data.getName() != null) party.setName(data.getName());
-            if (data.getGuildId() != null) party.setGuildId(data.getGuildId());
-            return ResponseEntity.ok(partyRepository.save(party));
-        }).orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<?> update(@PathVariable Integer id, @RequestBody Party data) {
+        accessService.requireAdmin();
+        return partyService.update(id, data);
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Integer id) {
-        if (!partyRepository.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        partyRepository.deleteById(id);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<?> delete(@PathVariable Integer id) {
+        accessService.requireAdmin();
+        return partyService.delete(id);
     }
 }
