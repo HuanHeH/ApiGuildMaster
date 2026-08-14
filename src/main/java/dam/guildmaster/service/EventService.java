@@ -16,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -47,23 +48,29 @@ public class EventService {
     public List<GameEvent> findAll(AuthUser me, Integer guildId) {
         if (me.isAdmin()) {
             if (guildId != null) {
-                return eventRepository.findByGuildId(guildId);
+                return sortByCreatedDesc(eventRepository.findByGuildId(guildId));
             }
-            return eventRepository.findAll();
+            return sortByCreatedDesc(eventRepository.findAll());
         }
         if (me.isTeacher()) {
             List<Integer> guilds = accessService.teacherGuildIds(me.getId());
             if (guildId != null) {
                 accessService.requireTeacherGuild(guildId);
-                return eventRepository.findByGuildId(guildId);
+                return sortByCreatedDesc(eventRepository.findByGuildId(guildId));
             }
-            return eventRepository.findByGuildIdIn(guilds);
+            return sortByCreatedDesc(eventRepository.findByGuildIdIn(guilds));
         }
         Integer g = accessService.requireStudentGuildContext(guildId);
         Set<Integer> myChars = accessService.myCharacterIdsInGuild(me, g);
         Set<Integer> myParties = accessService.myPartyIdsInGuild(me, g);
-        return eventRepository.findByGuildId(g).stream()
+        return sortByCreatedDesc(eventRepository.findByGuildId(g).stream()
                 .filter(ev -> studentCanSee(ev, myChars, myParties, g))
+                .toList());
+    }
+
+    private List<GameEvent> sortByCreatedDesc(List<GameEvent> events) {
+        return events.stream()
+                .sorted(Comparator.comparing(GameEvent::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
     }
 
