@@ -2,6 +2,7 @@ package dam.guildmaster.service;
 
 import dam.guildmaster.dto.LoginRequest;
 import dam.guildmaster.dto.LoginResponse;
+import dam.guildmaster.dto.UserAdminDto;
 import dam.guildmaster.dto.UserPublicDto;
 import dam.guildmaster.dto.UserTeacherViewDto;
 import dam.guildmaster.entity.GameCharacter;
@@ -14,6 +15,7 @@ import dam.guildmaster.repository.UserRepository;
 import dam.guildmaster.security.AccessService;
 import dam.guildmaster.security.AuthUser;
 import dam.guildmaster.security.JwtService;
+import dam.guildmaster.security.LoginRateLimiter;
 import dam.guildmaster.security.SessionActivityStore;
 import io.jsonwebtoken.Claims;
 import org.springframework.http.HttpStatus;
@@ -33,6 +35,7 @@ public class UserService {
     private final BCryptPasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final SessionActivityStore sessionActivityStore;
+    private final LoginRateLimiter loginRateLimiter;
     private final AccessService accessService;
 
     public UserService(
@@ -42,6 +45,7 @@ public class UserService {
             BCryptPasswordEncoder passwordEncoder,
             JwtService jwtService,
             SessionActivityStore sessionActivityStore,
+            LoginRateLimiter loginRateLimiter,
             AccessService accessService) {
         this.userRepository = userRepository;
         this.characterRepository = characterRepository;
@@ -49,12 +53,13 @@ public class UserService {
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.sessionActivityStore = sessionActivityStore;
+        this.loginRateLimiter = loginRateLimiter;
         this.accessService = accessService;
     }
 
     public ResponseEntity<?> findAll(AuthUser me, Integer guildId) {
         if (me.isAdmin()) {
-            return ResponseEntity.ok(userRepository.findAll());
+            return ResponseEntity.ok(userRepository.findAll().stream().map(UserAdminDto::from).toList());
         }
         if (me.isTeacher()) {
             Integer g = guildId;
@@ -110,7 +115,7 @@ public class UserService {
     public ResponseEntity<?> findById(AuthUser me, Integer id, Integer guildId) {
         return userRepository.findById(id).<ResponseEntity<?>>map(user -> {
             if (me.isAdmin()) {
-                return ResponseEntity.ok(user);
+                return ResponseEntity.ok(UserAdminDto.from(user));
             }
             if (me.isTeacher()) {
                 List<Integer> guilds = accessService.teacherGuildIds(me.getId());
@@ -138,8 +143,17 @@ public class UserService {
     }
 
     public ResponseEntity<?> create(User user) {
+        if (user.getName() == null || user.getName().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "name is required"));
+        }
         if (user.getMail() == null || user.getMail().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("message", "mail is required"));
+        }
+        if (user.getHash() == null || user.getHash().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "password is required"));
+        }
+        if (user.getRole() == null) {
+            return ResponseEntity.badRequest().body(Map.of("message", "role is required"));
         }
         if (userRepository.findByMailIgnoreCase(user.getMail().trim()).isPresent()) {
             return ResponseEntity.badRequest().body(Map.of("message", "mail already exists"));
@@ -149,7 +163,7 @@ public class UserService {
         if (user.getHash() != null && !user.getHash().startsWith("$2")) {
             user.setHash(passwordEncoder.encode(user.getHash()));
         }
-        return ResponseEntity.status(HttpStatus.CREATED).body(userRepository.save(user));
+        return ResponseEntity.status(HttpStatus.CREATED).body(UserAdminDto.from(userRepository.save(user)));
     }
 
     public ResponseEntity<?> update(AuthUser me, Integer id, User data) {
@@ -171,8 +185,16 @@ public class UserService {
                 }
                 user.setMail(mail);
             }
-            if (data.getName() != null) user.setName(data.getName());
+            if (data.getName() != null) {
+                if (data.getName().isBlank()) {
+                    return ResponseEntity.badRequest().body(Map.of("message", "name cannot be blank"));
+                }
+                user.setName(data.getName());
+            }
             if (data.getHash() != null) {
+                if (data.getHash().isBlank()) {
+                    return ResponseEntity.badRequest().body(Map.of("message", "password cannot be blank"));
+                }
                 if (!data.getHash().startsWith("$2")) {
                     user.setHash(passwordEncoder.encode(data.getHash()));
                 } else if (me.isAdmin()) {
@@ -185,8 +207,13 @@ public class UserService {
                 }
                 user.setRole(data.getRole());
             }
-            return ResponseEntity.ok(userRepository.save(user));
+            return ResponseEntity.ok(UserAdminDto.from(userRepository.save(user)));
         }).orElse(ResponseEntity.notFound().build());
+    }
+
+    public ResponseEntity<Void> logout(AuthUser me) {
+        sessionActivityStore.revoke(me.getJti());
+        return ResponseEntity.noContent().build();
     }
 
     public ResponseEntity<Void> delete(Integer id) {
@@ -198,13 +225,32 @@ public class UserService {
     }
 
     public ResponseEntity<?> login(LoginRequest request) {
+        return login(request, "unknown");
+    }
+
+    public ResponseEntity<?> login(LoginRequest request, String clientIp) {
         if (request.getMail() == null || request.getPassword() == null) {
             return ResponseEntity.badRequest().body(Map.of("message", "mail and password are required"));
         }
 
-        return userRepository.findByMailIgnoreCase(request.getMail())
+        String mail = request.getMail().trim();
+        if (mail.isEmpty() || request.getPassword().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "mail and password are required"));
+        }
+        if (loginRateLimiter.isBlocked(clientIp, mail)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(
+                    "message", "Too many login attempts. Try again later."
+            ));
+        }
+
+        return userRepository.findByMailIgnoreCase(mail)
                 .filter(user -> matchesPassword(request.getPassword(), user.getHash()))
                 .<ResponseEntity<?>>map(user -> {
+                    loginRateLimiter.clear(clientIp, mail);
+                    if (user.getHash() != null && !user.getHash().startsWith("$2")) {
+                        user.setHash(passwordEncoder.encode(request.getPassword()));
+                        userRepository.save(user);
+                    }
                     String token = jwtService.createToken(
                             user.getId(), user.getMail(), user.getName(), user.getRole().name());
                     Claims claims = jwtService.parse(token);
@@ -212,8 +258,16 @@ public class UserService {
                     return ResponseEntity.ok(new LoginResponse(
                             user.getId(), user.getName(), user.getMail(), user.getRole(), token));
                 })
-                .orElseGet(() -> ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                        .body(Map.of("message", "Invalid credentials")));
+                .orElseGet(() -> {
+                    loginRateLimiter.recordFailure(clientIp, mail);
+                    if (loginRateLimiter.isBlocked(clientIp, mail)) {
+                        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(
+                                "message", "Too many login attempts. Try again later."
+                        ));
+                    }
+                    return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                            .body(Map.of("message", "Invalid credentials"));
+                });
     }
 
     private boolean matchesPassword(String rawPassword, String storedHash) {

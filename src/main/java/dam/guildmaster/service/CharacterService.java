@@ -52,6 +52,10 @@ public class CharacterService {
         return characterRepository.findByGuildId(g);
     }
 
+    public List<GameCharacter> findMine(AuthUser me) {
+        return characterRepository.findByUserId(me.getId());
+    }
+
     public ResponseEntity<?> findById(AuthUser me, Integer id, Integer guildId) {
         return characterRepository.findById(id).<ResponseEntity<?>>map(c -> {
             if (me.isAdmin()) return ResponseEntity.ok(c);
@@ -100,11 +104,18 @@ public class CharacterService {
                 if (!Objects.equals(character.getUserId(), me.getId())) {
                     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Can only edit your characters"));
                 }
-                if (data.containsKey("user_id") || data.containsKey("guild_id")) {
-                    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Cannot change user_id/guild_id"));
+                if (!data.keySet().stream().allMatch(key -> "name".equals(key))) {
+                    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                            "message", "Students can only edit character name"
+                    ));
                 }
             } else if (me.isTeacher()) {
                 accessService.requireTeacherGuild(character.getGuildId());
+                if (!data.keySet().stream().allMatch(key -> "name".equals(key) || "party_id".equals(key))) {
+                    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                            "message", "Teachers can only edit character name or party"
+                    ));
+                }
             } else if (!me.isAdmin()) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Forbidden"));
             }

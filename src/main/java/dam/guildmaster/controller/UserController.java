@@ -5,6 +5,7 @@ import dam.guildmaster.dto.LoginRequest;
 import dam.guildmaster.security.AccessService;
 import dam.guildmaster.security.AuthUser;
 import dam.guildmaster.service.UserService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -52,7 +53,12 @@ public class UserController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest request) {
-        return userService.login(request);
+    public ResponseEntity<?> login(@RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+        return userService.login(request, httpRequest.getRemoteAddr());
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout() {
+        return userService.logout(accessService.requireUser());
     }
 }

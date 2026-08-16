@@ -29,6 +29,11 @@ public class CharacterController {
         return ResponseEntity.ok(characterService.findAll(me, guildId));
     }
 
+    @GetMapping("/me")
+    public ResponseEntity<?> getMine() {
+        return ResponseEntity.ok(characterService.findMine(accessService.requireUser()));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<?> getById(@PathVariable Integer id,
                                      @RequestParam(value = "guild_id", required = false) Integer guildId) {

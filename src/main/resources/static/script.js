@@ -14,6 +14,15 @@ const CURSOS = ['1', '2', '3', '4'];
 /** Sentinel for optional combo --Empty-- (stored as NULL in DB) */
 const EMPTY_SENTINEL = '__EMPTY__';
 
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
 function isEmptyComboValue(v) {
     return v == null || v === '' || v === EMPTY_SENTINEL;
 }
@@ -23,7 +32,7 @@ function nullHtml() {
 }
 function cellOrNull(value, display) {
     if (value == null || value === '') return nullHtml();
-    return display != null ? display : String(value);
+    return escapeHtml(display != null ? display : String(value));
 }
 
 function idName(id, name) {
@@ -174,7 +183,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     document.getElementById('app').style.display = 'block';
     document.getElementById('adminSesion').textContent = `Admin: ${admin.name}`;
-    document.getElementById('btnLogout').addEventListener('click', () => {
+    document.getElementById('btnLogout').addEventListener('click', async () => {
+        await api('/users/logout', { method: 'POST' }).catch(() => undefined);
         sessionStorage.removeItem(AUTH_KEY);
         window.location.href = '/login.html';
     });
@@ -1352,11 +1362,10 @@ async function cargarUsers() {
     usersCache = Array.isArray(r.data) ? r.data : [];
     document.getElementById('usersBody').innerHTML = usersCache.map(u => `
         <tr>
-            <td>${u.id}</td><td>${u.name || ''}</td><td>${u.mail || ''}</td>
-            <td style="max-width:220px;word-break:break-all;font-size:12px;">${u.hash || ''}</td>
-            <td>${u.role || ''}</td>
+            <td>${u.id}</td><td>${escapeHtml(u.name)}</td><td>${escapeHtml(u.mail)}</td>
+            <td>${escapeHtml(u.role)}</td>
             <td>${acciones(`editarUser(${u.id})`, `borrar('/users/${u.id}', () => afterMutation(cargarUsers))`)}</td>
-        </tr>`).join('') || '<tr><td colspan="6">No data</td></tr>';
+        </tr>`).join('') || '<tr><td colspan="5">No data</td></tr>';
     reapplyFilters();
 }
 
@@ -1377,9 +1386,9 @@ async function cargarGuilds() {
     document.getElementById('guildsBody').innerHTML = guildsCache.map(g => `
         <tr>
             <td>${g.id}</td>
-            <td>${g.name || ''}</td>
+            <td>${escapeHtml(g.name)}</td>
             <td>${g.number ?? ''}</td>
-            <td>${g.letter || ''}</td>
+            <td>${escapeHtml(g.letter)}</td>
             <td>${cellOrNull(g.level)}</td>
             <td>${cellOrNull(g.modality)}</td>
             <td>${acciones(`editarGuild(${g.id})`, `borrar('/guilds/${g.id}', () => afterMutation(cargarGuilds))`)}</td>
@@ -1410,8 +1419,8 @@ async function cargarMentorships() {
         const u = userById(m.user_id);
         const g = guildById(m.guild_id);
         return `<tr>
-            <td>${idName(m.user_id, u?.name)}</td>
-            <td>${g ? guildLabel(g) : idName(m.guild_id, '?')}</td>
+            <td>${escapeHtml(idName(m.user_id, u?.name))}</td>
+            <td>${escapeHtml(g ? guildLabel(g) : idName(m.guild_id, '?'))}</td>
             <td>${acciones(`editarMentorship(${m.user_id}, ${m.guild_id})`, `borrar('/mentorships/${m.user_id}/${m.guild_id}', () => afterMutation(cargarMentorships))`)}</td>
         </tr>`;
     }).join('') || '<tr><td colspan="3">No data</td></tr>';
@@ -1433,8 +1442,8 @@ async function cargarParties() {
     document.getElementById('partiesBody').innerHTML = partiesCache.map(p => {
         const g = guildById(p.guild_id);
         return `<tr>
-            <td>${p.id}</td><td>${p.name || ''}</td>
-            <td>${g ? guildLabel(g) : idName(p.guild_id, '?')}</td>
+            <td>${p.id}</td><td>${escapeHtml(p.name)}</td>
+            <td>${escapeHtml(g ? guildLabel(g) : idName(p.guild_id, '?'))}</td>
             <td>${acciones(`editarParty(${p.id})`, `borrar('/parties/${p.id}', () => afterMutation(cargarParties))`)}</td>
         </tr>`;
     }).join('') || '<tr><td colspan="4">No data</td></tr>';
@@ -1459,10 +1468,10 @@ async function cargarCharacters() {
         const g = guildById(c.guild_id);
         const p = partyById(c.party_id);
         return `<tr>
-            <td>${c.id}</td><td>${c.name || ''}</td><td>${c.job || ''}</td><td>${c.level ?? ''}</td>
+            <td>${c.id}</td><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.job)}</td><td>${c.level ?? ''}</td>
             <td>${c.exp ?? ''}</td>
-            <td>${idName(c.user_id, u?.name)}</td>
-            <td>${g ? guildLabel(g) : idName(c.guild_id, '?')}</td>
+            <td>${escapeHtml(idName(c.user_id, u?.name))}</td>
+            <td>${escapeHtml(g ? guildLabel(g) : idName(c.guild_id, '?'))}</td>
             <td>${cellOrNull(c.party_id, c.party_id != null ? idName(c.party_id, p?.name) : null)}</td>
             <td>${acciones(`editarCharacter(${c.id})`, `borrar('/characters/${c.id}', () => afterMutation(cargarCharacters))`)}</td>
         </tr>`;
@@ -1505,10 +1514,10 @@ async function cargarSkills() {
     skillsCache = Array.isArray(r.data) ? r.data : [];
     document.getElementById('skillsBody').innerHTML = skillsCache.map(s => `
         <tr>
-            <td>${s.id}</td><td>${s.name || ''}</td><td>${s.level_req ?? ''}</td><td>${s.job || ''}</td>
-            <td>${s.aoe || ''}</td><td>${s.exp_cost ?? ''}</td>
+            <td>${s.id}</td><td>${escapeHtml(s.name)}</td><td>${s.level_req ?? ''}</td><td>${escapeHtml(s.job)}</td>
+            <td>${escapeHtml(s.aoe)}</td><td>${s.exp_cost ?? ''}</td>
             <td>${s.debuff === true || s.debuff === 'true' || s.debuff === 1 ? 'true' : 'false'}</td>
-            <td>${s.description || ''}</td>
+            <td>${escapeHtml(s.description)}</td>
             <td>${acciones(`editarSkill(${s.id})`, `borrar('/skills/${s.id}', () => afterMutation(cargarSkills))`)}</td>
         </tr>`).join('') || '<tr><td colspan="9">No data</td></tr>';
     reapplyFilters();
@@ -1540,18 +1549,18 @@ async function cargarEvents() {
         const tParty = partyById(ev.target_party_id);
         const reviewer = userById(ev.reviewed_by_user_id);
         const guildCell = guild
-            ? `${idName(ev.guild_id, guild.name)} · ${guildClassLabel(guild)}`
+            ? `${escapeHtml(idName(ev.guild_id, guild.name))} · ${escapeHtml(guildClassLabel(guild))}`
             : idName(ev.guild_id, '?');
         return `<tr>
             <td>${ev.id}</td>
             <td>${cellOrNull(ev.caster_character_id, ev.caster_character_id != null ? idName(ev.caster_character_id, caster?.name) : null)}</td>
-            <td>${idName(ev.skill_id, skill?.name)}</td>
+            <td>${escapeHtml(idName(ev.skill_id, skill?.name))}</td>
             <td>${guildCell}</td>
             <td>${cellOrNull(ev.target_character_id, ev.target_character_id != null ? idName(ev.target_character_id, tChar?.name) : null)}</td>
             <td>${cellOrNull(ev.target_party_id, ev.target_party_id != null ? idName(ev.target_party_id, tParty?.name) : null)}</td>
-            <td>${eventStatusLabel(ev, skill)}</td>
+            <td>${escapeHtml(eventStatusLabel(ev, skill))}</td>
             <td>${cellOrNull(ev.reviewed_by_user_id, ev.reviewed_by_user_id != null ? idName(ev.reviewed_by_user_id, reviewer?.name) : null)}</td>
-            <td>${ev.created_at || ''}</td>
+            <td>${escapeHtml(ev.created_at)}</td>
             <td>${cellOrNull(ev.reviewed_at)}</td>
             <td>${cellOrNull(ev.comment)}</td>
             <td>${acciones(`editarEvent(${ev.id})`, `borrar('/events/${ev.id}', () => afterMutation(cargarEvents))`)}</td>
@@ -1812,7 +1821,7 @@ function abrirEdit(title, path, reload, fields, kind = null) {
                 const textMode = document.createElement('div');
                 textMode.id = 'edit_comment_text_mode';
                 textMode.className = 'comment-mode';
-                textMode.innerHTML = `<input type="text" id="edit_comment" value="${f.value ?? ''}" placeholder="Write comment..." autocomplete="off">`;
+                 textMode.innerHTML = `<input type="text" id="edit_comment" value="${escapeHtml(f.value)}" placeholder="Write comment..." autocomplete="off">`;
                 wrap.appendChild(textMode);
 
                 const expRow = document.createElement('div');
@@ -1825,7 +1834,7 @@ function abrirEdit(title, path, reload, fields, kind = null) {
                         <button type="button" id="edit_exp_sign_plus" class="exp-sign${sign === '+' ? ' selected' : ''}" data-sign="+">+</button>
                         <button type="button" id="edit_exp_sign_minus" class="exp-sign${sign === '-' ? ' selected' : ''}" data-sign="-">−</button>
                     </div>
-                    <input type="number" id="edit_exp_amount" class="edit-exp-amount" min="1" step="1" placeholder="EXP amount" value="${f.expAmount ?? ''}">
+                    <input type="number" id="edit_exp_amount" class="edit-exp-amount" min="1" step="1" placeholder="EXP amount" value="${escapeHtml(f.expAmount)}">
                 `;
                 wrap.appendChild(expRow);
 
@@ -1856,7 +1865,7 @@ function abrirEdit(title, path, reload, fields, kind = null) {
                 wrap.appendChild(changeJobRow);
             } else {
                 wrap.innerHTML = `<label>${fieldLabelHtml(f)}</label>
-                <input type="${t}" id="edit_${f.key}" value="${f.value ?? ''}"${minAttr}${f.readOnly ? ' readonly' : ''}>`;
+                 <input type="${t}" id="edit_${f.key}" value="${escapeHtml(f.value)}"${minAttr}${f.readOnly ? ' readonly' : ''}>`;
             }
             if (f.hint) {
                 const hint = document.createElement('small');

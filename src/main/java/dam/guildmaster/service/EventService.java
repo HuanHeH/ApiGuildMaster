@@ -15,6 +15,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.Comparator;
 import java.util.List;
@@ -96,23 +97,29 @@ public class EventService {
 
     @Transactional
     public ResponseEntity<?> create(AuthUser me, GameEvent event) {
+        ResponseEntity<?> response;
         if (me.isAdmin()) {
-            return createAsAdmin(event);
-        }
-        if (me.isStudent() || me.isTeacher()) {
+            response = createAsAdmin(event);
+        } else if (me.isStudent() || me.isTeacher()) {
             if (me.isTeacher() && event.getSkillId() != null) {
                 Skill maybeTeacherSkill = skillRepository.findById(event.getSkillId()).orElse(null);
                 if (isTeacherExpSkill(maybeTeacherSkill)) {
-                    return createTeacherExpEvent(me, event, maybeTeacherSkill);
+                    response = createTeacherExpEvent(me, event, maybeTeacherSkill);
+                } else {
+                    response = createAsPlayer(me, event);
                 }
+            } else {
+                response = createAsPlayer(me, event);
             }
-            return createAsPlayer(me, event);
+        } else {
+            response = ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Forbidden"));
         }
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Forbidden"));
+        return rollbackOnError(response);
     }
 
+    @Transactional
     public ResponseEntity<?> update(AuthUser me, Integer id, GameEvent data) {
-        return eventRepository.findById(id).<ResponseEntity<?>>map(event -> {
+        ResponseEntity<?> response = eventRepository.findById(id).<ResponseEntity<?>>map(event -> {
             EventStatus previousStatus = event.getStatus();
             Skill existingSkill = skillRepository.findById(event.getSkillId()).orElse(null);
             String changeJobTarget = isChangeJobSkill(existingSkill) ? event.getComment() : null;
@@ -125,6 +132,16 @@ public class EventService {
             }
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Students cannot update events"));
         }).orElse(ResponseEntity.notFound().build());
+        return rollbackOnError(response);
+    }
+
+    private ResponseEntity<?> rollbackOnError(ResponseEntity<?> response) {
+        if (response.getStatusCode().isError() && TransactionSynchronizationManager.isActualTransactionActive()) {
+            org.springframework.transaction.interceptor.TransactionAspectSupport
+                    .currentTransactionStatus()
+                    .setRollbackOnly();
+        }
+        return response;
     }
 
     public ResponseEntity<?> delete(Integer id) {
@@ -199,10 +216,10 @@ public class EventService {
         }
 
         if (isLevelUpSkill(skill)) {
-            ResponseEntity<?> levelErr = applyLevelUpNow(caster, skill);
+            ResponseEntity<?> levelErr = validateLevelUpNow(caster, skill);
             if (levelErr != null) return levelErr;
         } else if (isChangeJobSkill(skill)) {
-            ResponseEntity<?> jobErr = applyChangeJobNow(caster, changeJobRequest);
+            ResponseEntity<?> jobErr = validateChangeJobNow(caster, changeJobRequest);
             if (jobErr != null) return jobErr;
         }
 
@@ -210,12 +227,14 @@ public class EventService {
         if (expErr != null) return expErr;
 
         if (isLevelUpSkill(skill)) {
+            caster.setLevel(levelUpTargetLevel(skill));
             event.setStatus(EventStatus.AUTO);
             event.setComment("Auto-applied level up (no teacher review)");
             event.setReviewedByUserId(null);
             event.setReviewedAt(null);
         } else if (isChangeJobSkill(skill)) {
             String newJob = extractChangeJobTarget(changeJobRequest);
+            caster.setJob(newJob);
             event.setStatus(EventStatus.AUTO);
             event.setComment("Auto-applied Change Job to " + newJob);
             event.setReviewedByUserId(null);
@@ -750,6 +769,13 @@ public class EventService {
     }
 
     private ResponseEntity<?> applyLevelUpNow(GameCharacter caster, Skill skill) {
+        ResponseEntity<?> validationError = validateLevelUpNow(caster, skill);
+        if (validationError != null) return validationError;
+        caster.setLevel(levelUpTargetLevel(skill));
+        return null;
+    }
+
+    private ResponseEntity<?> validateLevelUpNow(GameCharacter caster, Skill skill) {
         Integer targetLevel = levelUpTargetLevel(skill);
         if (targetLevel == null) {
             return ResponseEntity.badRequest().body(Map.of("message", "Unknown Level Up skill"));
@@ -761,11 +787,17 @@ public class EventService {
                     "LEVEL UP TO LEVEL " + targetLevel + " requires character at level " + requiredCurrent
             ));
         }
-        caster.setLevel(targetLevel);
         return null;
     }
 
     private ResponseEntity<?> applyChangeJobNow(GameCharacter caster, String requestedJob) {
+        ResponseEntity<?> validationError = validateChangeJobNow(caster, requestedJob);
+        if (validationError != null) return validationError;
+        caster.setJob(extractChangeJobTarget(requestedJob));
+        return null;
+    }
+
+    private ResponseEntity<?> validateChangeJobNow(GameCharacter caster, String requestedJob) {
         String jobErr = validateChangeJobComment(requestedJob, caster.getJob());
         if (jobErr != null) {
             return ResponseEntity.badRequest().body(Map.of("message", jobErr));
@@ -773,7 +805,6 @@ public class EventService {
         if (caster.getLevel() == null || caster.getLevel() < 3) {
             return ResponseEntity.badRequest().body(Map.of("message", "Change Job requires level 3+"));
         }
-        caster.setJob(extractChangeJobTarget(requestedJob));
         return null;
     }
 
