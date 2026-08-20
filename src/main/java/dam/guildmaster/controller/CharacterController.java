@@ -1,11 +1,9 @@
 package dam.guildmaster.controller;
 
 import dam.guildmaster.entity.GameCharacter;
-import dam.guildmaster.entity.Skill;
 import dam.guildmaster.security.AccessService;
 import dam.guildmaster.security.AuthUser;
 import dam.guildmaster.service.CharacterService;
-import dam.guildmaster.service.SkillService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -29,9 +27,11 @@ public class CharacterController {
         return ResponseEntity.ok(characterService.findAll(me, guildId));
     }
 
+    /** Must be registered before /{id} so "me" is not parsed as an integer id. */
     @GetMapping("/me")
     public ResponseEntity<?> getMine() {
-        return ResponseEntity.ok(characterService.findMine(accessService.requireUser()));
+        AuthUser me = accessService.requireUser();
+        return ResponseEntity.ok(characterService.findMine(me));
     }
 
     @GetMapping("/{id}")

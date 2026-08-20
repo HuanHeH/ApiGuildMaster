@@ -52,6 +52,7 @@ public class CharacterService {
         return characterRepository.findByGuildId(g);
     }
 
+    /** Own characters across all guilds (no guild_id). Used by mobile student profile. */
     public List<GameCharacter> findMine(AuthUser me) {
         return characterRepository.findByUserId(me.getId());
     }
