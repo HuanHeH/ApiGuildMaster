@@ -144,11 +144,36 @@ public class EventService {
         return response;
     }
 
-    public ResponseEntity<?> delete(Integer id) {
-        if (!eventRepository.existsById(id)) {
-            return ResponseEntity.notFound().build();
+    @Transactional
+    public ResponseEntity<?> delete(AuthUser me, Integer id) {
+        ResponseEntity<?> response = eventRepository.findById(id).<ResponseEntity<?>>map(event -> {
+            if (me.isAdmin()) {
+                eventRepository.delete(event);
+                return ResponseEntity.noContent().build();
+            }
+            if (me.isStudent()) {
+                return cancelOwnPendingEvent(me, event);
+            }
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Forbidden"));
+        }).orElse(ResponseEntity.notFound().build());
+        return rollbackOnError(response);
+    }
+
+    /** Student cancels own PENDING cast: refund ExpCost and delete the event. */
+    private ResponseEntity<?> cancelOwnPendingEvent(AuthUser me, GameEvent event) {
+        if (event.getStatus() != EventStatus.PENDING) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Only PENDING events can be cancelled"));
         }
-        eventRepository.deleteById(id);
+        if (event.getCasterCharacterId() == null) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Cannot cancel this event"));
+        }
+        GameCharacter caster = characterRepository.findById(event.getCasterCharacterId()).orElse(null);
+        if (caster == null || !Objects.equals(caster.getUserId(), me.getId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Can only cancel your own events"));
+        }
+        accessService.requireStudentGuildContext(event.getGuildId());
+        refundExp(event);
+        eventRepository.delete(event);
         return ResponseEntity.noContent().build();
     }
 
@@ -294,12 +319,35 @@ public class EventService {
             String changeJobTarget) {
         accessService.requireTeacherGuild(event.getGuildId());
         if (data.getStatus() != null) event.setStatus(data.getStatus());
+
+        EventStatus newStatus = event.getStatus();
+        if (newStatus == EventStatus.AUTO || previousStatus == EventStatus.AUTO) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "message", "AUTO events cannot be changed by teachers this way"
+            ));
+        }
+        Skill skill = skillRepository.findById(event.getSkillId()).orElse(null);
+        if (isTeacherExpSkill(skill)) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Teacher EXP events cannot be reverted"));
+        }
+
+        if (newStatus == EventStatus.PENDING
+                && (previousStatus == EventStatus.APPROVED || previousStatus == EventStatus.REJECTED)) {
+            event.setComment(null);
+            event.setReviewedByUserId(null);
+            event.setReviewedAt(null);
+            normalizeComment(event);
+            ResponseEntity<?> revertErr = applyRevertToPendingSideEffects(previousStatus, event);
+            if (revertErr != null) return revertErr;
+            return ResponseEntity.ok(eventRepository.save(event));
+        }
+
         event.setComment(data.getComment());
         normalizeComment(event);
         ResponseEntity<?> invalid = validateCommentForStatus(event);
         if (invalid != null) return invalid;
-        if (event.getStatus() != null
-                && (event.getStatus() == EventStatus.APPROVED || event.getStatus() == EventStatus.REJECTED)) {
+        if (newStatus != null
+                && (newStatus == EventStatus.APPROVED || newStatus == EventStatus.REJECTED)) {
             event.setReviewedByUserId(me.getId());
             if (previousStatus == EventStatus.PENDING || event.getReviewedAt() == null) {
                 event.setReviewedAt(java.time.LocalDateTime.now());
@@ -723,6 +771,25 @@ public class EventService {
         return null;
     }
 
+    /**
+     * Undo review economy when returning APPROVED/REJECTED → PENDING.
+     * APPROVED: claw back Debuff gift (ExpCost/2) from targets.
+     * REJECTED: charge ExpCost again (refund on reject is undone).
+     */
+    private ResponseEntity<?> applyRevertToPendingSideEffects(EventStatus previousStatus, GameEvent event) {
+        Skill skill = skillRepository.findById(event.getSkillId()).orElse(null);
+        if (previousStatus == EventStatus.APPROVED) {
+            return clawbackDebuffTargetGift(event, skill);
+        }
+        if (previousStatus == EventStatus.REJECTED) {
+            GameCharacter caster = event.getCasterCharacterId() != null
+                    ? characterRepository.findById(event.getCasterCharacterId()).orElse(null)
+                    : null;
+            return chargeCasterExpCost(caster, skill, false);
+        }
+        return null;
+    }
+
     private void refundExp(GameEvent event) {
         Skill skill = skillRepository.findById(event.getSkillId()).orElse(null);
         if (skill == null || event.getCasterCharacterId() == null) return;
@@ -732,6 +799,23 @@ public class EventService {
         int current = caster.getExp() == null ? 0 : caster.getExp();
         caster.setExp(current + cost);
         characterRepository.save(caster);
+    }
+
+    private ResponseEntity<?> clawbackDebuffTargetGift(GameEvent event, Skill skill) {
+        if (!isDebuffSkill(skill)) {
+            return null;
+        }
+        int gift = skillExpCost(skill) / 2;
+        if (gift <= 0) {
+            return null;
+        }
+        List<GameCharacter> targets = resolveAoeTargets(event, skill);
+        for (GameCharacter target : targets) {
+            int current = target.getExp() == null ? 0 : target.getExp();
+            target.setExp(Math.max(0, current - gift));
+            characterRepository.save(target);
+        }
+        return null;
     }
 
     private ResponseEntity<?> applyApprovedProgression(GameEvent event, String preservedChangeJobTarget) {

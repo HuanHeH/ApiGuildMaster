@@ -46,7 +46,7 @@ public class EventController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable Integer id) {
-        accessService.requireAdmin();
-        return eventService.delete(id);
+        AuthUser me = accessService.requireUser();
+        return eventService.delete(me, id);
     }
 }
