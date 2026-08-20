@@ -780,9 +780,10 @@ public class EventService {
     private static Integer levelUpTargetLevel(Skill skill) {
         if (!isLevelUpSkill(skill)) return null;
         String name = skill.getName() == null ? "" : skill.getName().toLowerCase(Locale.ROOT);
-        if (name.contains("to level 4") || name.contains("level up iii")) return 4;
-        if (name.contains("to level 3") || name.contains("level up ii")) return 3;
-        if (name.contains("to level 2") || name.contains("level up i")) return 2;
+        // Support "LEVEL UP TO LEVEL N", "Level up to N", and legacy "Level Up I/II/III"
+        if (name.contains("to level 4") || name.contains("to 4") || name.contains("level up iii")) return 4;
+        if (name.contains("to level 3") || name.contains("to 3") || name.contains("level up ii")) return 3;
+        if (name.contains("to level 2") || name.contains("to 2") || name.contains("level up i")) return 2;
         return null;
     }
 
