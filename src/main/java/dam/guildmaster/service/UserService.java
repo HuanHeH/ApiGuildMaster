@@ -1,5 +1,6 @@
 package dam.guildmaster.service;
 
+import dam.guildmaster.dto.ChangePasswordRequest;
 import dam.guildmaster.dto.LoginRequest;
 import dam.guildmaster.dto.LoginResponse;
 import dam.guildmaster.dto.UserAdminDto;
@@ -214,6 +215,26 @@ public class UserService {
     public ResponseEntity<Void> logout(AuthUser me) {
         sessionActivityStore.revoke(me.getJti());
         return ResponseEntity.noContent().build();
+    }
+
+    public ResponseEntity<?> changePassword(AuthUser me, ChangePasswordRequest request) {
+        if (request.getOldPassword() == null || request.getNewPassword() == null || request.getConfirmPassword() == null) {
+            return ResponseEntity.badRequest().body(Map.of("message", "All fields are required"));
+        }
+        if (request.getNewPassword().isBlank() || request.getNewPassword().length() < 4) {
+            return ResponseEntity.badRequest().body(Map.of("message", "New password must be at least 4 characters"));
+        }
+        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+            return ResponseEntity.badRequest().body(Map.of("message", "New password and confirmation do not match"));
+        }
+        return userRepository.findById(me.getId()).<ResponseEntity<?>>map(user -> {
+            if (!matchesPassword(request.getOldPassword(), user.getHash())) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", "Old password is incorrect"));
+            }
+            user.setHash(passwordEncoder.encode(request.getNewPassword()));
+            userRepository.save(user);
+            return ResponseEntity.noContent().build();
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     public ResponseEntity<Void> delete(Integer id) {

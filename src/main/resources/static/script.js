@@ -189,6 +189,50 @@ document.addEventListener('DOMContentLoaded', () => {
         window.location.href = '/login.html';
     });
 
+    document.getElementById('btnChangePassword').addEventListener('click', () => {
+        document.getElementById('pwOld').value = '';
+        document.getElementById('pwNew').value = '';
+        document.getElementById('pwConfirm').value = '';
+        document.getElementById('pwError').style.display = 'none';
+        document.getElementById('modalChangePassword').style.display = 'block';
+    });
+
+    document.getElementById('formChangePassword').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const oldPw = document.getElementById('pwOld').value;
+        const newPw = document.getElementById('pwNew').value;
+        const confirmPw = document.getElementById('pwConfirm').value;
+        const errBox = document.getElementById('pwError');
+
+        if (!oldPw || !newPw || !confirmPw) {
+            errBox.textContent = 'All fields are required';
+            errBox.style.display = 'block';
+            return;
+        }
+        if (newPw.length < 4) {
+            errBox.textContent = 'New password must be at least 4 characters';
+            errBox.style.display = 'block';
+            return;
+        }
+        if (newPw !== confirmPw) {
+            errBox.textContent = 'New password and confirmation do not match';
+            errBox.style.display = 'block';
+            return;
+        }
+
+        const r = await api('/users/me/password', {
+            method: 'POST',
+            body: JSON.stringify({ oldPassword: oldPw, newPassword: newPw, confirmPassword: confirmPw })
+        });
+        if (r.ok) {
+            cerrarModalPassword();
+            notify('Password changed successfully');
+        } else {
+            errBox.textContent = r.data?.message || 'Could not change password';
+            errBox.style.display = 'block';
+        }
+    });
+
     document.querySelectorAll('input[type="number"]').forEach(inp => {
         const isExp = /exp/i.test(inp.id || '');
         if (!inp.hasAttribute('min')) inp.min = isExp ? '0' : '1';
@@ -576,6 +620,10 @@ window.activarTab = function (tabId) {
 window.cerrarModal = function () {
     document.getElementById('modalEdit').style.display = 'none';
     editContext = null;
+};
+
+window.cerrarModalPassword = function () {
+    document.getElementById('modalChangePassword').style.display = 'none';
 };
 
 async function api(path, options = {}) {

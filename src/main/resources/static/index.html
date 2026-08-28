@@ -18,6 +18,7 @@
         <h1>GuildMaster</h1>
         <div>
             <span id="adminSesion"></span>
+            <button type="button" class="btn-secondary btn-small" id="btnChangePassword">Change Password</button>
             <button type="button" class="btn-secondary btn-small" id="btnLogout">LogOut</button>
         </div>
     </div>
@@ -316,6 +317,34 @@
     </div>
 </div>
 
-<script src="/script.js?v=20260814c"></script>
+<div id="modalChangePassword" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="cerrarModalPassword()">&times;</span>
+        <div class="modal-scroll">
+            <h3>Change Password</h3>
+            <form id="formChangePassword">
+                <div class="form-group">
+                    <label>Current password<span class="req">*</span></label>
+                    <input type="password" id="pwOld" autocomplete="current-password" required>
+                </div>
+                <div class="form-group">
+                    <label>New password<span class="req">*</span></label>
+                    <input type="password" id="pwNew" autocomplete="new-password" required>
+                </div>
+                <div class="form-group">
+                    <label>Confirm new password<span class="req">*</span></label>
+                    <input type="password" id="pwConfirm" autocomplete="new-password" required>
+                </div>
+                <div id="pwError" class="auth-error"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" onclick="cerrarModalPassword()">Cancel</button>
+                    <button type="submit" class="btn-success">Change password</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script src="/script.js?v=20260828a"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 package dam.guildmaster.controller;
 
 import dam.guildmaster.entity.User;
+import dam.guildmaster.dto.ChangePasswordRequest;
 import dam.guildmaster.dto.LoginRequest;
 import dam.guildmaster.security.AccessService;
 import dam.guildmaster.security.AuthUser;
@@ -60,5 +61,10 @@ public class UserController {
     @PostMapping("/logout")
     public ResponseEntity<Void> logout() {
         return userService.logout(accessService.requireUser());
+    }
+
+    @PostMapping("/me/password")
+    public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request) {
+        return userService.changePassword(accessService.requireUser(), request);
     }
 }
