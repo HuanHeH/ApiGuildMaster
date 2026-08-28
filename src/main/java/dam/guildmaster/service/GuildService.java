@@ -62,12 +62,19 @@ public class GuildService {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    public ResponseEntity<Void> delete(Integer id) {
+    public ResponseEntity<?> delete(Integer id) {
         if (!guildRepository.existsById(id)) {
             return ResponseEntity.notFound().build();
         }
         guildRepository.deleteById(id);
         return ResponseEntity.noContent().build();
+    }
+
+    public ResponseEntity<?> updateName(Integer id, String name) {
+        return guildRepository.findById(id).<ResponseEntity<?>>map(guild -> {
+            guild.setName(name);
+            return ResponseEntity.ok(guildRepository.save(guild));
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     private static void normalizeOptionals(Guild guild) {

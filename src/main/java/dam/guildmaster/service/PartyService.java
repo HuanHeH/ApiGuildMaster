@@ -53,23 +53,61 @@ public class PartyService {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    public ResponseEntity<Party> create(Party party) {
+    public ResponseEntity<?> create(AuthUser me, Party party) {
+        if (party.getName() == null || party.getName().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "name is required"));
+        }
+        if (party.getName().length() > 100) {
+            return ResponseEntity.badRequest().body(Map.of("message", "name must be 100 characters or fewer"));
+        }
+        if (party.getGuildId() == null) {
+            return ResponseEntity.badRequest().body(Map.of("message", "guild_id is required"));
+        }
+        if (me.isAdmin()) {
+            // OK
+        } else if (me.isTeacher()) {
+            accessService.requireTeacherGuild(party.getGuildId());
+        } else {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Forbidden"));
+        }
+        party.setId(null);
         return ResponseEntity.status(HttpStatus.CREATED).body(partyRepository.save(party));
     }
 
-    public ResponseEntity<?> update(Integer id, Party data) {
-        return partyRepository.findById(id).map(party -> {
-            if (data.getName() != null) party.setName(data.getName());
-            if (data.getGuildId() != null) party.setGuildId(data.getGuildId());
+    public ResponseEntity<?> update(AuthUser me, Integer id, Party data) {
+        return partyRepository.findById(id).<ResponseEntity<?>>map(party -> {
+            if (!me.isAdmin()) {
+                accessService.requireTeacherGuild(party.getGuildId());
+            }
+            if (data.getName() != null) {
+                if (data.getName().isBlank()) {
+                    return ResponseEntity.badRequest().body(Map.of("message", "name cannot be blank"));
+                }
+                if (data.getName().length() > 100) {
+                    return ResponseEntity.badRequest().body(Map.of("message", "name must be 100 characters or fewer"));
+                }
+                party.setName(data.getName());
+            }
+            if (data.getGuildId() != null && !Objects.equals(data.getGuildId(), party.getGuildId())) {
+                if (me.isTeacher()) {
+                    accessService.requireTeacherGuild(data.getGuildId());
+                }
+                party.setGuildId(data.getGuildId());
+            }
             return ResponseEntity.ok(partyRepository.save(party));
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    public ResponseEntity<Void> delete(Integer id) {
-        if (!partyRepository.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        partyRepository.deleteById(id);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<?> delete(AuthUser me, Integer id) {
+        return partyRepository.findById(id).<ResponseEntity<?>>map(party -> {
+            if (!me.isAdmin()) {
+                if (!me.isTeacher()) {
+                    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Forbidden"));
+                }
+                accessService.requireTeacherGuild(party.getGuildId());
+            }
+            partyRepository.delete(party);
+            return ResponseEntity.noContent().build();
+        }).orElse(ResponseEntity.notFound().build());
     }
 }

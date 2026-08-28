@@ -34,19 +34,22 @@ public class PartyController {
 
     @PostMapping
     public ResponseEntity<?> create(@RequestBody Party party) {
-        accessService.requireAdmin();
-        return partyService.create(party);
+        accessService.requireAdminOrTeacher();
+        AuthUser me = accessService.requireUser();
+        return partyService.create(me, party);
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Integer id, @RequestBody Party data) {
-        accessService.requireAdmin();
-        return partyService.update(id, data);
+        accessService.requireAdminOrTeacher();
+        AuthUser me = accessService.requireUser();
+        return partyService.update(me, id, data);
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable Integer id) {
-        accessService.requireAdmin();
-        return partyService.delete(id);
+        accessService.requireAdminOrTeacher();
+        AuthUser me = accessService.requireUser();
+        return partyService.delete(me, id);
     }
 }

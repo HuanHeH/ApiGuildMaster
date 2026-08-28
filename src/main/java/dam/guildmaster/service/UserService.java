@@ -237,6 +237,17 @@ public class UserService {
         }).orElse(ResponseEntity.notFound().build());
     }
 
+    public ResponseEntity<?> changeName(AuthUser me, Integer id, String name) {
+        if (!me.isAdmin() && !Objects.equals(me.getId(), id)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Can only change your own name"));
+        }
+        return userRepository.findById(id).<ResponseEntity<?>>map(user -> {
+            user.setName(name);
+            userRepository.save(user);
+            return ResponseEntity.ok(UserAdminDto.from(user));
+        }).orElse(ResponseEntity.notFound().build());
+    }
+
     public ResponseEntity<Void> delete(Integer id) {
         if (!userRepository.existsById(id)) {
             return ResponseEntity.notFound().build();

@@ -10,6 +10,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/users")
 public class UserController {
@@ -45,6 +47,19 @@ public class UserController {
     public ResponseEntity<?> update(@PathVariable Integer id, @RequestBody User data) {
         AuthUser me = accessService.requireUser();
         return userService.update(me, id, data);
+    }
+
+    @PutMapping("/{id}/name")
+    public ResponseEntity<?> changeName(@PathVariable Integer id, @RequestBody Map<String, String> body) {
+        AuthUser me = accessService.requireUser();
+        String name = body == null ? null : body.get("name");
+        if (name == null || name.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "name is required"));
+        }
+        if (name.length() > 100) {
+            return ResponseEntity.badRequest().body(Map.of("message", "name must be 100 characters or fewer"));
+        }
+        return userService.changeName(me, id, name.trim());
     }
 
     @DeleteMapping("/{id}")
