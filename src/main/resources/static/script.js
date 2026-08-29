@@ -14,6 +14,17 @@ const CURSOS = ['1', '2', '3', '4'];
 /** Sentinel for optional combo --Empty-- (stored as NULL in DB) */
 const EMPTY_SENTINEL = '__EMPTY__';
 
+function generatePassword(length = 12) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#';
+    let pw = '';
+    const arr = new Uint32Array(length);
+    crypto.getRandomValues(arr);
+    for (let i = 0; i < length; i++) {
+        pw += chars[arr[i] % chars.length];
+    }
+    return pw;
+}
+
 function escapeHtml(value) {
     return String(value ?? '')
         .replaceAll('&', '&amp;')
@@ -248,6 +259,19 @@ document.addEventListener('DOMContentLoaded', () => {
     initStaticCombos();
     configurarFormularios();
     cargarTodo();
+
+    const btnGen = document.getElementById('btnGenPassword');
+    if (btnGen) {
+        btnGen.addEventListener('click', () => {
+            const pw = generatePassword();
+            const field = document.getElementById('insUserHash');
+            if (field) {
+                field.value = pw;
+                field.type = 'text';
+            }
+            notify(`Password generated: ${pw}`);
+        });
+    }
 });
 
 /* ========== TABLE FILTERS ========== */
@@ -529,8 +553,8 @@ function initStaticCombos() {
     createCombo('combo_insMentUserId');
     createCombo('combo_insMentGuildId');
     createCombo('combo_insPartyGuildId');
-    createCombo('combo_insCharJob');
-    setComboOptions('combo_insCharJob', jobOpts());
+    createCombo('combo_insCharJob', { allowEmpty: true, emptyLabel: '--No class--' });
+    setComboOptions('combo_insCharJob', CHARACTER_JOBS.map(j => ({ value: j, label: j })));
     createCombo('combo_insCharLevel');
     setComboOptions('combo_insCharLevel', CURSOS.map(n => ({ value: n, label: n })));
     createCombo('combo_insCharUserId');
@@ -577,7 +601,7 @@ function refreshRelationCombos() {
     setComboOptions('combo_insCharUserId', userOpts());
     setComboOptions('combo_insCharGuildId', guildOpts());
     refreshCharPartyCombo(true);
-    setComboOptions('combo_insCharJob', jobOpts());
+    setComboOptions('combo_insCharJob', CHARACTER_JOBS.map(j => ({ value: j, label: j })));
     setComboOptions('combo_insSkillJob', jobOpts());
     setComboOptions('combo_insEvCaster', characterOpts());
     setComboOptions('combo_insEvSkill', skillOpts());
@@ -1182,7 +1206,6 @@ function configurarFormularios() {
     document.getElementById('formInsertCharacter').addEventListener('submit', async e => {
         e.preventDefault();
         if (!assertNumberMins([{ id: 'insCharExp', min: 0 }])) return;
-        if (!requireCombo('combo_insCharJob', 'Job')) return;
         if (!requireCombo('combo_insCharLevel', 'Level')) return;
         if (!requireCombo('combo_insCharUserId', 'User')) return;
         if (!requireCombo('combo_insCharGuildId', 'Guild')) return;
@@ -1193,7 +1216,7 @@ function configurarFormularios() {
         if (!name) { notify('Name is required', 'err'); return; }
         const body = {
             name,
-            job,
+            job: isEmptyComboValue(job) ? null : job,
             level: Number(getComboValue('combo_insCharLevel')),
             exp: Number(val('insCharExp') || 0),
             user_id: userId,
@@ -1516,7 +1539,7 @@ async function cargarCharacters() {
         const g = guildById(c.guild_id);
         const p = partyById(c.party_id);
         return `<tr>
-            <td>${c.id}</td><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.job)}</td><td>${c.level ?? ''}</td>
+            <td>${c.id}</td><td>${escapeHtml(c.name)}</td><td>${cellOrNull(c.job)}</td><td>${c.level ?? ''}</td>
             <td>${c.exp ?? ''}</td>
             <td>${escapeHtml(idName(c.user_id, u?.name))}</td>
             <td>${escapeHtml(g ? guildLabel(g) : idName(c.guild_id, '?'))}</td>
@@ -1532,7 +1555,8 @@ window.editarCharacter = async function (id) {
     if (!r.ok) return notify('Not found', 'err');
     abrirEdit('Edit Character', `/characters/${id}`, cargarCharacters, [
         { key: 'name', label: 'Name', value: r.data.name },
-        { key: 'job', label: 'Job', combo: true, options: jobOpts(), value: r.data.job },
+        { key: 'job', label: 'Job', combo: true, allowEmpty: true, emptyLabel: '--No class--',
+            options: CHARACTER_JOBS.map(j => ({ value: j, label: j })), value: r.data.job || '' },
         { key: 'level', label: 'Level', combo: true, numeric: true,
             options: CURSOS.map(n => ({ value: Number(n), label: n })), value: r.data.level },
         { key: 'exp', label: 'Exp', value: r.data.exp, type: 'number', min: 0 },
