@@ -14,7 +14,7 @@ public class GameCharacter {
     @Column(name = "Name", nullable = false, length = 100)
     private String name;
 
-    @Column(name = "Job", nullable = false, length = 50)
+    @Column(name = "Job", nullable = true, length = 50)
     private String job;
 
     @Column(name = "Level", nullable = false)

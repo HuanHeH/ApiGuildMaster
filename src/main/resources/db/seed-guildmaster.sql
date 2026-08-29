@@ -34,4 +34,5 @@ INSERT INTO `Skills` (`Name`, `LevelReq`, `Job`, `Description`, `AOE`, `ExpCost`
     ('Change Job',        3, 'Common',  'Change class (Mage/Rogue/Paladin).', 'SINGLE', 80, 0),
     ('Fireball',          1, 'Mage',    'Deal damage to a single target.', 'SINGLE', 30, 1),
     ('Repartir EXP',      1, 'Teacher', 'Grant EXP to a target.',         'SINGLE', 0,  0),
-    ('Quitar EXP',        1, 'Teacher', 'Remove EXP from a target.',       'SINGLE', 0,  0);
+    ('Quitar EXP',        1, 'Teacher', 'Remove EXP from a target.',       'SINGLE', 0,  0),
+    ('Choose Class',      0, 'Common',  'Choose your class: Mage (spellcaster), Rogue (stealthy), or Paladin (tank). Available only for characters without a class.', 'SINGLE', 0, 0);

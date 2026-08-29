@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS `Parties` (
 CREATE TABLE IF NOT EXISTS `Characters` (
     `ID`      INT AUTO_INCREMENT PRIMARY KEY,
     `Name`    VARCHAR(100) NOT NULL,
-    `Job`     VARCHAR(50) NOT NULL,
+    `Job`     VARCHAR(50) NULL,
     `Level`   INT NOT NULL DEFAULT 1,
     `Exp`     INT NOT NULL DEFAULT 0,
     `UserID`  INT NOT NULL,
