@@ -268,8 +268,25 @@ document.addEventListener('DOMContentLoaded', () => {
             if (field) {
                 field.value = pw;
                 field.type = 'text';
+                const toggleBtn = document.getElementById('btnTogglePw');
+                if (toggleBtn) toggleBtn.textContent = '\u{1F441}';
             }
             notify(`Password generated: ${pw}`);
+        });
+    }
+
+    const btnTogglePw = document.getElementById('btnTogglePw');
+    if (btnTogglePw) {
+        btnTogglePw.addEventListener('click', () => {
+            const field = document.getElementById('insUserHash');
+            if (!field) return;
+            if (field.type === 'password') {
+                field.type = 'text';
+                btnTogglePw.textContent = '\u{1F441}';
+            } else {
+                field.type = 'password';
+                btnTogglePw.textContent = '\u{1F576}';
+            }
         });
     }
 });
