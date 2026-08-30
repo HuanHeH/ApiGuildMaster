@@ -108,9 +108,12 @@ public class CharacterService {
                 if (!Objects.equals(character.getUserId(), me.getId())) {
                     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Can only edit your characters"));
                 }
-                if (character.getJob() == null && data.containsKey("job") && data.get("job") != null) {
-                    // Allow setting job for the first time
-                } else if (!data.keySet().stream().allMatch(key -> "name".equals(key))) {
+                if (data.containsKey("job")) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                            "message", "Use Choose Class skill (create an event) to assign a class"
+                    ));
+                }
+                if (!data.keySet().stream().allMatch(key -> "name".equals(key))) {
                     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
                             "message", "Students can only edit character name"
                     ));

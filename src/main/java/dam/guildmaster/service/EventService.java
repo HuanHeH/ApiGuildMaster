@@ -994,9 +994,13 @@ public class EventService {
     private static String extractChangeJobTarget(String comment) {
         if (comment == null || comment.isBlank()) return null;
         String raw = comment.trim();
-        String prefix = "Auto-applied Change Job to ";
-        if (raw.regionMatches(true, 0, prefix, 0, prefix.length())) {
-            raw = raw.substring(prefix.length()).trim();
+        String changeJobPrefix = "Auto-applied Change Job to ";
+        if (raw.regionMatches(true, 0, changeJobPrefix, 0, changeJobPrefix.length())) {
+            raw = raw.substring(changeJobPrefix.length()).trim();
+        }
+        String chooseClassPrefix = "Auto-applied Choose Class to ";
+        if (raw.regionMatches(true, 0, chooseClassPrefix, 0, chooseClassPrefix.length())) {
+            raw = raw.substring(chooseClassPrefix.length()).trim();
         }
         if (!raw.equalsIgnoreCase("Mage") && !raw.equalsIgnoreCase("Rogue") && !raw.equalsIgnoreCase("Paladin")) {
             return null;
