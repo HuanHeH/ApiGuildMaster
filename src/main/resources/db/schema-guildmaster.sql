@@ -83,11 +83,11 @@ CREATE TABLE IF NOT EXISTS `Events` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------- Foreign keys ----------
--- Delete character  -> events where caster/target
--- Delete user       -> characters (then their events) + mentorships
--- Delete guild      -> parties, characters, mentorships, events
--- Delete party      -> events targeting that party; character.PartyID -> NULL
--- Delete user (reviewer) -> Events.ReviewedByUserID -> NULL
+-- Delete character -> events where caster/target
+-- Delete user      -> characters (+ their events) + mentorships; reviewer -> SET NULL
+-- Delete guild     -> parties, characters, mentorships, events of that guild
+-- Delete party     -> events targeting that party; character.PartyID -> SET NULL
+-- Delete skill     -> events using that skill
 
 ALTER TABLE `Mentorships`
     ADD CONSTRAINT `FK_Mentorship_User`
@@ -119,4 +119,4 @@ ALTER TABLE `Events`
     ADD CONSTRAINT `FK_Event_Reviewer`
         FOREIGN KEY (`ReviewedByUserID`) REFERENCES `Users` (`ID`) ON DELETE SET NULL,
     ADD CONSTRAINT `FK_Event_Skill`
-        FOREIGN KEY (`SkillID`) REFERENCES `Skills` (`ID`);
+        FOREIGN KEY (`SkillID`) REFERENCES `Skills` (`ID`) ON DELETE CASCADE;
