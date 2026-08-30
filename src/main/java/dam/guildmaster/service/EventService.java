@@ -200,7 +200,7 @@ public class EventService {
         if (isTeacherExpSkill(skill)) {
             ResponseEntity<?> expErr = applyTeacherExpDelta(event, skill);
             if (expErr != null) return expErr;
-        } else if (isLevelUpSkill(skill) || isChangeJobSkill(skill)) {
+        } else if (isLevelUpSkill(skill) || isChangeJobSkill(skill) || isChooseClassSkill(skill)) {
             ResponseEntity<?> effectErr = applyAdminAutoSkillEffects(event, skill, skipCaster);
             if (effectErr != null) return effectErr;
         } else if (skill != null) {
@@ -236,6 +236,13 @@ public class EventService {
             if (jobErr != null) {
                 return ResponseEntity.badRequest().body(Map.of("message", jobErr));
             }
+        } else if (isChooseClassSkill(skill)) {
+            normalizeComment(event);
+            changeJobRequest = event.getComment();
+            String jobErr = validateChooseClassComment(changeJobRequest, caster.getJob());
+            if (jobErr != null) {
+                return ResponseEntity.badRequest().body(Map.of("message", jobErr));
+            }
         } else {
             event.setComment(null);
         }
@@ -262,6 +269,13 @@ public class EventService {
             caster.setJob(newJob);
             event.setStatus(EventStatus.AUTO);
             event.setComment("Auto-applied Change Job to " + newJob);
+            event.setReviewedByUserId(null);
+            event.setReviewedAt(null);
+        } else if (isChooseClassSkill(skill)) {
+            String newJob = extractChangeJobTarget(changeJobRequest);
+            caster.setJob(newJob);
+            event.setStatus(EventStatus.AUTO);
+            event.setComment("Auto-applied Choose Class to " + newJob);
             event.setReviewedByUserId(null);
             event.setReviewedAt(null);
         } else {
@@ -462,11 +476,11 @@ public class EventService {
         if (isTeacherExpSkill(skill)) {
             return applyTeacherExpDelta(event, skill);
         }
-        if (!isLevelUpSkill(skill) && !isChangeJobSkill(skill)) {
+        if (!isLevelUpSkill(skill) && !isChangeJobSkill(skill) && !isChooseClassSkill(skill)) {
             return null;
         }
         if (event.getCasterCharacterId() == null) {
-            return ResponseEntity.badRequest().body(Map.of("message", "Caster is required for Level Up / Change Job"));
+            return ResponseEntity.badRequest().body(Map.of("message", "Caster is required for Level Up / Change Job / Choose Class"));
         }
         GameCharacter caster = characterRepository.findById(event.getCasterCharacterId()).orElse(null);
         if (caster == null) {
@@ -483,6 +497,14 @@ public class EventService {
         if (isLevelUpSkill(skill)) {
             ResponseEntity<?> levelErr = applyLevelUpNow(caster, skill);
             if (levelErr != null) return levelErr;
+        } else if (isChooseClassSkill(skill)) {
+            String newJob = extractChangeJobTarget(event.getComment());
+            if (newJob == null) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "message", "Choose Class requires target job (Mage, Rogue or Paladin)"
+                ));
+            }
+            caster.setJob(newJob);
         } else {
             ResponseEntity<?> jobErr = applyChangeJobNow(caster, event.getComment());
             if (jobErr != null) return jobErr;
@@ -571,7 +593,8 @@ public class EventService {
     }
 
     private static boolean isAutoEventSkill(Skill skill) {
-        return isTeacherExpSkill(skill) || isLevelUpSkill(skill) || isChangeJobSkill(skill);
+        return isTeacherExpSkill(skill) || isLevelUpSkill(skill) || isChangeJobSkill(skill)
+                || isChooseClassSkill(skill);
     }
 
     private static void coerceAutoEventFields(GameEvent event, Skill skill) {
@@ -600,6 +623,15 @@ public class EventService {
             String job = extractChangeJobTarget(event.getComment());
             if (job != null) {
                 event.setComment("Auto-applied Change Job to " + job);
+            }
+        }
+        if (isChooseClassSkill(skill)) {
+            event.setStatus(EventStatus.AUTO);
+            event.setReviewedByUserId(null);
+            event.setReviewedAt(null);
+            String job = extractChangeJobTarget(event.getComment());
+            if (job != null) {
+                event.setComment("Auto-applied Choose Class to " + job);
             }
         }
     }
@@ -909,20 +941,32 @@ public class EventService {
     }
 
     private static boolean skillMatchesCasterJob(Skill skill, GameCharacter caster) {
-        if (skill.getJob() == null || caster.getJob() == null) return false;
-        if (skill.getJob().equalsIgnoreCase("Common")) return true;
+        if (skill.getJob() == null) return false;
+        if (skill.getJob().equalsIgnoreCase("Common")) {
+            if (caster.getJob() == null) {
+                // Jobless casters can only launch Choose Class
+                return isChooseClassSkill(skill);
+            }
+            return true;
+        }
+        if (caster.getJob() == null) return false;
         return skill.getJob().equalsIgnoreCase(caster.getJob());
     }
 
     private static boolean isProgressionSkill(Skill skill) {
         if (skill.getJob() == null || !skill.getJob().equalsIgnoreCase("Common")) return false;
         String name = skill.getName() == null ? "" : skill.getName().toLowerCase(Locale.ROOT);
-        return name.contains("level up") || name.contains("change job");
+        return name.contains("level up") || name.contains("change job") || name.contains("choose class");
     }
 
     private static boolean isChangeJobSkill(Skill skill) {
         if (skill.getName() == null) return false;
         return skill.getName().toLowerCase(Locale.ROOT).contains("change job");
+    }
+
+    private static boolean isChooseClassSkill(Skill skill) {
+        if (skill.getName() == null) return false;
+        return skill.getName().toLowerCase(Locale.ROOT).contains("choose class");
     }
 
     private static String validateChangeJobComment(String comment, String currentJob) {
@@ -932,6 +976,17 @@ public class EventService {
         }
         if (currentJob != null && job.equalsIgnoreCase(currentJob)) {
             return "Change Job target must be a different class";
+        }
+        return null;
+    }
+
+    private static String validateChooseClassComment(String comment, String currentJob) {
+        String job = extractChangeJobTarget(comment);
+        if (job == null) {
+            return "Choose Class requires comment with target job (Mage, Rogue or Paladin)";
+        }
+        if (currentJob != null) {
+            return "Choose Class is only available for characters without a class";
         }
         return null;
     }

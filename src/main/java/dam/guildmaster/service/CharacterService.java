@@ -126,8 +126,15 @@ public class CharacterService {
             if (data.containsKey("name") && data.get("name") != null) {
                 character.setName(String.valueOf(data.get("name")));
             }
-            if (data.containsKey("job") && data.get("job") != null) {
-                character.setJob(String.valueOf(data.get("job")));
+            if (data.containsKey("job")) {
+                Object jobValue = data.get("job");
+                if (jobValue == null || String.valueOf(jobValue).trim().isEmpty()) {
+                    if (!me.isStudent()) {
+                        character.setJob(null);
+                    }
+                } else {
+                    character.setJob(String.valueOf(jobValue));
+                }
             }
             if (data.containsKey("level") && data.get("level") != null) {
                 character.setLevel(((Number) data.get("level")).intValue());
