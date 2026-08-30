@@ -87,6 +87,9 @@ public class CharacterService {
             }
         }
         character.setId(null);
+        if (character.getJob() != null && character.getJob().isBlank()) {
+            character.setJob(null);
+        }
         if (character.getPartyId() != null && character.getPartyId() <= 0) {
             character.setPartyId(null);
         }

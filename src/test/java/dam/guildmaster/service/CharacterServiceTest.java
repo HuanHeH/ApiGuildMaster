@@ -76,6 +76,42 @@ class CharacterServiceTest {
         verify(characterRepository).save(character);
     }
 
+    @Test
+    void adminCanCreateCharacterWithoutJob() {
+        GameCharacter input = new GameCharacter();
+        input.setName("No class yet");
+        input.setUserId(4);
+        input.setGuildId(1);
+        input.setLevel(1);
+        input.setExp(0);
+        input.setJob(null);
+        when(characterRepository.save(input)).thenAnswer(invocation -> invocation.getArgument(0));
+
+        AuthUser admin = new AuthUser(1, "admin@admin.com", "Admin", Role.Admin, "jti");
+        ResponseEntity<?> response = characterService.create(admin, input);
+
+        assertEquals(201, response.getStatusCode().value());
+        verify(characterRepository).save(input);
+        org.junit.jupiter.api.Assertions.assertNull(input.getJob());
+    }
+
+    @Test
+    void adminCreateNormalizesBlankJobToNull() {
+        GameCharacter input = new GameCharacter();
+        input.setName("No class yet");
+        input.setUserId(4);
+        input.setGuildId(1);
+        input.setLevel(1);
+        input.setExp(0);
+        input.setJob("   ");
+        when(characterRepository.save(input)).thenAnswer(invocation -> invocation.getArgument(0));
+
+        AuthUser admin = new AuthUser(1, "admin@admin.com", "Admin", Role.Admin, "jti");
+        characterService.create(admin, input);
+
+        org.junit.jupiter.api.Assertions.assertNull(input.getJob());
+    }
+
     private static GameCharacter character(int id, int userId, int level, int exp) {
         GameCharacter character = new GameCharacter();
         character.setId(id);
