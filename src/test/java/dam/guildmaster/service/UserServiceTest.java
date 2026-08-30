@@ -83,4 +83,9 @@ class UserServiceTest {
         assertEquals(204, response.getStatusCode().value());
         org.junit.jupiter.api.Assertions.assertFalse(sessionActivityStore.touch("logout-jti"));
     }
+
+    @Test
+    void touchRehydratesUnknownJtiAfterRestart() {
+        org.junit.jupiter.api.Assertions.assertTrue(sessionActivityStore.touch("fresh-jti"));
+    }
 }

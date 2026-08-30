@@ -297,6 +297,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     document.getElementById('app').style.display = 'block';
     document.getElementById('adminSesion').textContent = `Admin: ${admin.name}`;
+    hardenAdminForms();
     document.getElementById('btnLogout').addEventListener('click', async () => {
         await api('/users/logout', { method: 'POST' }).catch(() => undefined);
         sessionStorage.removeItem(AUTH_KEY);
@@ -781,6 +782,27 @@ window.cerrarModalPassword = function () {
     document.getElementById('modalChangePassword').style.display = 'none';
 };
 
+function shouldLogoutOn401(data) {
+    const message = String(data?.message || '');
+    if (/old password is incorrect/i.test(message)) return false;
+    return true;
+}
+
+function hardenAdminForms() {
+    document.querySelectorAll('form').forEach(form => {
+        form.setAttribute('method', 'post');
+        form.setAttribute('action', '#');
+        form.addEventListener('keydown', e => {
+            if (e.key !== 'Enter') return;
+            const target = e.target;
+            if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
+            if (target.type === 'submit' || target.type === 'button') return;
+            if (target.closest('[id^="combo_"]')) return;
+            e.preventDefault();
+        });
+    });
+}
+
 async function api(path, options = {}) {
     const sesion = JSON.parse(sessionStorage.getItem(AUTH_KEY) || '{}');
     const headers = {
@@ -794,14 +816,14 @@ async function api(path, options = {}) {
         ...options,
         headers
     });
-    if (res.status === 401) {
-        sessionStorage.removeItem(AUTH_KEY);
-        window.location.href = '/login.html';
-        return { ok: false, status: 401, data: { message: 'Unauthorized' } };
-    }
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    if (res.status === 401 && shouldLogoutOn401(data)) {
+        sessionStorage.removeItem(AUTH_KEY);
+        window.location.href = '/login.html';
+        return { ok: false, status: 401, data: data || { message: 'Unauthorized' } };
+    }
     return { ok: res.ok, status: res.status, data };
 }
 
