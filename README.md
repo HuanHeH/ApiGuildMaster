@@ -1,6 +1,8 @@
 ﻿# ApiGuildMaster
 
 > **Créditos:** Este proyecto fue desarrollado como parte del **Summer of Code 2026 de Aircury SL**. Créditos de este proyecto y su correspondiente dotación de premio a **Aircury SL**.
+>
+> **Agradecimientos:** GuildMaster no habría sido posible sin el apoyo y la oportunidad que nos brindó **GranaDev**, del grupo Aircury, a través de su programa **Summer of Code 2026**.
 
 ## Local configuration
 
