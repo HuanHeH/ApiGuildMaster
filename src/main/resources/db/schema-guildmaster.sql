@@ -81,3 +81,42 @@ CREATE TABLE IF NOT EXISTS `Events` (
     `Comment`           TEXT NULL,
     CONSTRAINT `chk_Events_Status` CHECK (`Status` IN ('PENDING', 'APPROVED', 'REJECTED', 'AUTO'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------- Foreign keys ----------
+-- Delete character  -> events where caster/target
+-- Delete user       -> characters (then their events) + mentorships
+-- Delete guild      -> parties, characters, mentorships, events
+-- Delete party      -> events targeting that party; character.PartyID -> NULL
+-- Delete user (reviewer) -> Events.ReviewedByUserID -> NULL
+
+ALTER TABLE `Mentorships`
+    ADD CONSTRAINT `FK_Mentorship_User`
+        FOREIGN KEY (`UserID`) REFERENCES `Users` (`ID`) ON DELETE CASCADE,
+    ADD CONSTRAINT `FK_Mentorship_Guild`
+        FOREIGN KEY (`GuildID`) REFERENCES `Guilds` (`ID`) ON DELETE CASCADE;
+
+ALTER TABLE `Parties`
+    ADD CONSTRAINT `FK_Party_Guild`
+        FOREIGN KEY (`GuildID`) REFERENCES `Guilds` (`ID`) ON DELETE CASCADE;
+
+ALTER TABLE `Characters`
+    ADD CONSTRAINT `FK_Character_User`
+        FOREIGN KEY (`UserID`) REFERENCES `Users` (`ID`) ON DELETE CASCADE,
+    ADD CONSTRAINT `FK_Character_Guild`
+        FOREIGN KEY (`GuildID`) REFERENCES `Guilds` (`ID`) ON DELETE CASCADE,
+    ADD CONSTRAINT `FK_Character_Party`
+        FOREIGN KEY (`PartyID`) REFERENCES `Parties` (`ID`) ON DELETE SET NULL;
+
+ALTER TABLE `Events`
+    ADD CONSTRAINT `FK_Event_Caster`
+        FOREIGN KEY (`CasterCharacterID`) REFERENCES `Characters` (`ID`) ON DELETE CASCADE,
+    ADD CONSTRAINT `FK_Event_TargetCharacter`
+        FOREIGN KEY (`TargetCharacterID`) REFERENCES `Characters` (`ID`) ON DELETE CASCADE,
+    ADD CONSTRAINT `FK_Event_Guild`
+        FOREIGN KEY (`GuildID`) REFERENCES `Guilds` (`ID`) ON DELETE CASCADE,
+    ADD CONSTRAINT `FK_Event_TargetParty`
+        FOREIGN KEY (`TargetPartyID`) REFERENCES `Parties` (`ID`) ON DELETE CASCADE,
+    ADD CONSTRAINT `FK_Event_Reviewer`
+        FOREIGN KEY (`ReviewedByUserID`) REFERENCES `Users` (`ID`) ON DELETE SET NULL,
+    ADD CONSTRAINT `FK_Event_Skill`
+        FOREIGN KEY (`SkillID`) REFERENCES `Skills` (`ID`);
