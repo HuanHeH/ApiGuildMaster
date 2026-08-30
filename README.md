@@ -1,5 +1,7 @@
 ﻿# ApiGuildMaster
 
+> **Créditos:** Este proyecto fue desarrollado como parte del **Summer of Code 2026 de Aircury SL**. Créditos de este proyecto y su correspondiente dotación de premio a **Aircury SL**.
+
 ## Local configuration
 
 The API requires these environment variables:
