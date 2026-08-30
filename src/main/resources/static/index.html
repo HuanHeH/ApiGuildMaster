@@ -214,10 +214,21 @@
         </div>
         <div class="formulario-container">
             <h3>Insert Event</h3>
-            <p id="insEvGuide" class="event-form-guide">1) Pick Skill · 2) Pick Status — then the rest of the form appears.</p>
+            <p id="insEvGuide" class="event-form-guide">1) Pick who acts (Teacher or Character) · 2) Pick a Skill — the form adapts.</p>
             <form id="formInsertEvent">
                 <div class="grid-2">
-                    <div class="form-group"><label>Skill<span class="req">*</span></label><div id="combo_insEvSkill"></div></div>
+                    <div class="form-group">
+                        <label>Actor (who acts)<span class="req">*</span></label>
+                        <div id="combo_insEvActor"></div>
+                        <small class="field-hint" id="insEvActorHint">A Teacher (for Grant/Remove EXP) or a Character.</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Skill<span class="req">*</span></label>
+                        <div id="combo_insEvSkill"></div>
+                        <small class="field-hint" id="insEvSkillHint">Filtered by actor (class, level, job).</small>
+                    </div>
+                </div>
+                <div class="grid-2">
                     <div class="form-group" id="insEvStatusGroup">
                         <label>Status<span class="req">*</span></label>
                         <div id="combo_insEvStatus"></div>
@@ -226,24 +237,22 @@
                 </div>
 
                 <div id="insEvRestForm" class="grid-2" hidden>
-                    <div class="form-group" id="insEvCasterGroup">
-                        <label id="lblInsEvCaster">Caster<span class="req">*</span></label>
-                        <div id="combo_insEvCaster"></div>
-                        <small class="field-hint" id="insEvCasterHint">Character that casts the skill.</small>
-                    </div>
-
                     <div class="form-group" id="insEvGuildGroup">
                         <label>Guild<span class="req">*</span></label>
                         <div id="combo_insEvGuild"></div>
+                        <small class="field-hint" id="insEvGuildHint">Auto-set from actor's character guild.</small>
+                    </div>
+
+                    <div class="form-group" id="insEvTargetPartyGroup">
+                        <label>Target Party</label>
+                        <div id="combo_insEvTargetParty"></div>
+                        <small class="field-hint" id="insEvTargetPartyHint">Only parties of the selected guild.</small>
                     </div>
 
                     <div class="form-group" id="insEvTargetCharGroup">
                         <label>Target Character</label>
                         <div id="combo_insEvTargetChar"></div>
-                    </div>
-                    <div class="form-group" id="insEvTargetPartyGroup">
-                        <label>Target Party</label>
-                        <div id="combo_insEvTargetParty"></div>
+                        <small class="field-hint" id="insEvTargetCharHint">Only characters of the selected guild.</small>
                     </div>
 
                     <div class="form-group" id="insEvReviewerGroup">
@@ -274,9 +283,9 @@
                             <input id="insEvLevelUpCommentText" type="text" readonly value="Auto-applied level up (no teacher review)">
                         </div>
 
-                        <!-- Change Job: class picker only (+ locked preview) -->
+                        <!-- Change Job / Choose Class: class picker only (+ locked preview) -->
                         <div id="insEvChangeJobComment" class="comment-mode" hidden>
-                            <label class="field-sublabel">New job</label>
+                            <label class="field-sublabel">New class</label>
                             <div id="combo_insEvChangeJob"></div>
                             <input id="insEvChangeJobPreview" type="text" readonly placeholder="Comment preview">
                         </div>

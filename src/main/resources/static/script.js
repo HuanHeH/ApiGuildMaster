@@ -92,9 +92,112 @@ function isLevelUpSkill(skill) {
 function isChangeJobSkill(skill) {
     return String(skill?.name || '').toLowerCase().includes('change job');
 }
-/** Auto skills: Level Up, Change Job, Grant/Remove EXP (DB Status = AUTO). */
+function isChooseClassSkill(skill) {
+    return String(skill?.name || '').toLowerCase().includes('choose class');
+}
+/** Level Up destination level (2/3/4) from skill name. */
+function levelUpTargetLevelJS(skill) {
+    if (!isLevelUpSkill(skill)) return null;
+    const name = String(skill.name || '').toLowerCase();
+    if (name.includes('to level 4') || name.includes('to 4') || name.includes('level up iii')) return 4;
+    if (name.includes('to level 3') || name.includes('to 3') || name.includes('level up ii')) return 3;
+    if (name.includes('to level 2') || name.includes('to 2') || name.includes('level up i')) return 2;
+    return null;
+}
+/** Fixed auto comment for Change Job / Choose Class skills. */
+function autoJobComment(skill, job) {
+    const normalized = capitalizeJobUi(job);
+    if (!CHARACTER_JOBS.some(j => j.toLowerCase() === normalized.toLowerCase())) return null;
+    if (isChooseClassSkill(skill)) return `Auto-applied Choose Class to ${normalized}`;
+    return `Auto-applied Change Job to ${normalized}`;
+}
+/** Auto skills: Level Up, Change Job, Choose Class, Grant/Remove EXP (DB Status = AUTO). */
 function isAutoEventSkill(skill) {
-    return isTeacherExpSkill(skill) || isLevelUpSkill(skill) || isChangeJobSkill(skill);
+    return isTeacherExpSkill(skill) || isLevelUpSkill(skill) || isChangeJobSkill(skill)
+        || isChooseClassSkill(skill);
+}
+
+/* ========== EVENT ACTOR (who acts: Teacher or Character) ========== */
+/** Actor combo options: teachers first, then characters. */
+function actorOpts() {
+    const teachers = usersCache
+        .filter(u => u.role === 'Teacher')
+        .map(u => ({ value: `t:${u.id}`, label: `TEACHER · ${idName(u.id, u.name)}` }));
+    const chars = charactersCache.map(c => {
+        const owner = userById(c.user_id);
+        const jobTxt = c.job ? `${c.job} Lv.${c.level ?? 1}` : 'no class yet';
+        const g = guildById(c.guild_id);
+        return {
+            value: `c:${c.id}`,
+            label: `${idName(c.id, c.name)} (${jobTxt} · ${owner?.name ?? '?'}${g ? ` · ${guildClassLabel(g)}` : ''})`
+        };
+    });
+    return [...teachers, ...chars];
+}
+function parseActorValue(v) {
+    if (v == null || v === '') return null;
+    const s = String(v);
+    if (s.startsWith('t:')) return { kind: 'teacher', id: Number(s.slice(2)) };
+    if (s.startsWith('c:')) return { kind: 'character', id: Number(s.slice(2)) };
+    return null;
+}
+function actorCharacter() {
+    const a = parseActorValue(getComboValue('combo_insEvActor'));
+    return a && a.kind === 'character' ? characterById(a.id) : null;
+}
+function actorTeacher() {
+    const a = parseActorValue(getComboValue('combo_insEvActor'));
+    return a && a.kind === 'teacher' ? userById(a.id) : null;
+}
+
+/* ========== SKILL ↔ ACTOR FILTERING ========== */
+/** Can this skill be launched by this actor? Mirrors backend rules. */
+function skillAllowedForActor(skill, actor) {
+    if (!skill) return false;
+    if (actor == null) return true; // no actor picked yet → show all skills
+    if (actor.kind === 'teacher') return isTeacherExpSkill(skill);
+    const c = characterById(actor.id);
+    if (!c) return false;
+    if (isTeacherExpSkill(skill)) return false; // teacher skills have no character caster
+    if (isChooseClassSkill(skill)) return c.job == null;
+    if (c.job == null) return false; // jobless casters can only Choose Class
+    const level = Number(c.level ?? 1);
+    const levelReq = Number(skill.level_req ?? 1);
+    if (levelReq > level) return false;
+    if (isLevelUpSkill(skill)) {
+        const target = levelUpTargetLevelJS(skill);
+        return target != null && level === target - 1;
+    }
+    if (isChangeJobSkill(skill)) return level >= 3;
+    if (String(skill.job) === 'Common') return true;
+    return String(skill.job) === String(c.job);
+}
+function skillOptsForActor(actor) {
+    return skillsCache
+        .filter(s => skillAllowedForActor(s, actor))
+        .map(s => ({ value: s.id, label: idName(s.id, s.name) }));
+}
+
+/* ========== GUILD / PARTY / TARGET CASCADING ========== */
+function partyOptsForGuildId(guildId) {
+    if (guildId == null || guildId === '') return partyOpts();
+    return partiesCache
+        .filter(p => Number(p.guild_id) === Number(guildId))
+        .map(p => ({ value: p.id, label: idName(p.id, p.name) }));
+}
+/** Target characters filtered by party (first) or guild. */
+function targetCharOptsFor(guildId, partyId) {
+    let list = charactersCache;
+    if (partyId != null && partyId !== '') {
+        list = list.filter(c => Number(c.party_id) === Number(partyId));
+    } else if (guildId != null && guildId !== '') {
+        list = list.filter(c => Number(c.guild_id) === Number(guildId));
+    }
+    return list.map(c => {
+        const owner = userById(c.user_id);
+        const jobTxt = c.job ? c.job : 'no class';
+        return { value: c.id, label: `${idName(c.id, c.name)} (${jobTxt}${owner ? ` · ${owner.name}` : ''})` };
+    });
 }
 function eventStatusLabel(ev, skill) {
     return ev.status || '';
@@ -587,7 +690,7 @@ function initStaticCombos() {
     createCombo('combo_insSkillAoe');
     setComboOptions('combo_insSkillAoe', AOES.map(a => ({ value: a, label: a })));
 
-    createCombo('combo_insEvCaster', { allowEmpty: true, emptyLabel: '--Empty--' });
+    createCombo('combo_insEvActor');
     createCombo('combo_insEvSkill');
     createCombo('combo_insEvGuild');
     createCombo('combo_insEvTargetChar', { allowEmpty: true, emptyLabel: '--Empty--' });
@@ -597,6 +700,9 @@ function initStaticCombos() {
     createCombo('combo_insEvReviewer', { allowEmpty: true, emptyLabel: '--Empty--' });
     createCombo('combo_insEvChangeJob');
     setComboOptions('combo_insEvChangeJob', CHARACTER_JOBS.map(j => ({ value: j, label: j })));
+    if (combos.combo_insEvActor) {
+        combos.combo_insEvActor.onChange = () => syncInsertEventFormUI({ fromActorChange: true });
+    }
     if (combos.combo_insEvChangeJob) {
         combos.combo_insEvChangeJob.onChange = () => syncChangeJobPreview();
     }
@@ -605,6 +711,15 @@ function initStaticCombos() {
     }
     if (combos.combo_insEvSkill) {
         combos.combo_insEvSkill.onChange = () => syncInsertEventFormUI({ fromSkillChange: true });
+    }
+    if (combos.combo_insEvGuild) {
+        combos.combo_insEvGuild.onChange = () => syncInsertEventFormUI();
+    }
+    if (combos.combo_insEvTargetParty) {
+        combos.combo_insEvTargetParty.onChange = () => syncInsertEventFormUI();
+    }
+    if (combos.combo_insEvReviewer) {
+        combos.combo_insEvReviewer.onChange = () => syncInsertEventFormUI();
     }
     document.getElementById('insEvExpSignPlus')?.addEventListener('click', () => setInsertExpSign('+'));
     document.getElementById('insEvExpSignMinus')?.addEventListener('click', () => setInsertExpSign('-'));
@@ -620,12 +735,11 @@ function refreshRelationCombos() {
     refreshCharPartyCombo(true);
     setComboOptions('combo_insCharJob', CHARACTER_JOBS.map(j => ({ value: j, label: j })));
     setComboOptions('combo_insSkillJob', jobOpts());
-    setComboOptions('combo_insEvCaster', characterOpts());
+    setComboOptions('combo_insEvActor', actorOpts());
     setComboOptions('combo_insEvSkill', skillOpts());
     setComboOptions('combo_insEvGuild', guildOpts());
-    setComboOptions('combo_insEvTargetChar', characterOpts());
-    setComboOptions('combo_insEvTargetParty', partyOpts());
     setComboOptions('combo_insEvReviewer', teacherOpts());
+    syncInsertEventFormUI();
 }
 
 function createEditCombo(key, options, { value, allowEmpty = false, emptyLabel = '(None)', freeText = false } = {}) {
@@ -785,7 +899,8 @@ function changeJobAutoComment(job) {
 function parseChangeJobTarget(comment) {
     if (comment == null || String(comment).trim() === '') return null;
     const raw = String(comment).trim();
-    const m = raw.match(/^Auto-applied Change Job to\s+(\w+)$/i);
+    let m = raw.match(/^Auto-applied Change Job to\s+(\w+)$/i);
+    if (!m) m = raw.match(/^Auto-applied Choose Class to\s+(\w+)$/i);
     const normalized = capitalizeJobUi(m ? m[1] : raw);
     if (!CHARACTER_JOBS.some(j => j.toLowerCase() === normalized.toLowerCase())) return null;
     return normalized;
@@ -793,8 +908,9 @@ function parseChangeJobTarget(comment) {
 
 function syncChangeJobPreview() {
     const job = getComboValueOrNull('combo_insEvChangeJob');
+    const skill = skillById(getComboValueOrNull('combo_insEvSkill'));
     const preview = document.getElementById('insEvChangeJobPreview');
-    if (preview) preview.value = job ? changeJobAutoComment(job) || '' : '';
+    if (preview) preview.value = job ? autoJobComment(skill, job) || '' : '';
 }
 
 /** API datetime → value for <input type="datetime-local"> */
@@ -817,8 +933,8 @@ function readInsertEventComment(skill, status) {
         return buildExpDeltaComment(getInsertExpSign(), val('insEvExpAmount'));
     }
     if (isLevelUpSkill(skill)) return LEVEL_UP_COMMENT;
-    if (isChangeJobSkill(skill)) {
-        return changeJobAutoComment(getComboValueOrNull('combo_insEvChangeJob'));
+    if (isChangeJobSkill(skill) || isChooseClassSkill(skill)) {
+        return autoJobComment(skill, getComboValueOrNull('combo_insEvChangeJob'));
     }
     const comment = val('insEvComment');
     return comment === '' ? null : comment;
@@ -838,7 +954,7 @@ function setCommentModeVisible(el, visible) {
     el.style.display = visible ? '' : 'none';
 }
 
-/** Exactly one comment UI (or none). Modes: none | text | exp | levelup | changejob */
+/** Exactly one comment UI (or none). Modes: none | text | exp | levelup | changejob | chooseclass */
 function applyInsertCommentMode(mode) {
     const textMode = document.getElementById('insEvCommentTextMode');
     const expRow = document.getElementById('insEvExpComment');
@@ -850,14 +966,17 @@ function applyInsertCommentMode(mode) {
     setCommentModeVisible(textMode, mode === 'text');
     setCommentModeVisible(expRow, mode === 'exp');
     setCommentModeVisible(levelUpRow, mode === 'levelup');
-    setCommentModeVisible(changeJobRow, mode === 'changejob');
+    setCommentModeVisible(changeJobRow, mode === 'changejob' || mode === 'chooseclass');
+
+    const jobLabel = document.querySelector('#insEvChangeJobComment .field-sublabel');
+    if (jobLabel) jobLabel.textContent = mode === 'chooseclass' ? 'Class to assign' : 'New class';
 
     if (mode !== 'text' && textInput) textInput.value = '';
     if (mode !== 'exp') {
         const amt = document.getElementById('insEvExpAmount');
         if (amt) amt.value = '';
     }
-    if (mode !== 'changejob') {
+    if (mode !== 'changejob' && mode !== 'chooseclass') {
         setComboValue('combo_insEvChangeJob', null, '');
         const preview = document.getElementById('insEvChangeJobPreview');
         if (preview) preview.value = '';
@@ -872,7 +991,10 @@ function applyInsertCommentMode(mode) {
         if (commentHint) commentHint.textContent = 'Fixed locked comment for Level Up.';
     } else if (mode === 'changejob') {
         syncChangeJobPreview();
-        if (commentHint) commentHint.textContent = 'Pick Mage / Rogue / Paladin — comment fills automatically.';
+        if (commentHint) commentHint.textContent = 'Pick a different class — comment fills automatically.';
+    } else if (mode === 'chooseclass') {
+        syncChangeJobPreview();
+        if (commentHint) commentHint.textContent = 'Pick the class to assign — comment fills automatically.';
     } else if (mode === 'exp') {
         if (commentHint) commentHint.textContent = 'Only + / − and EXP amount (no class picker).';
     } else if (mode === 'text') {
@@ -883,14 +1005,16 @@ function applyInsertCommentMode(mode) {
 }
 
 /**
- * Skill first, then Status.
+ * Skill + Status (+ optional actor context for guides).
  * Returns which fields/modes the Event form should show.
  */
-function resolveEventFormLayout(skill, status) {
+function resolveEventFormLayout(skill, status, actor) {
     const teacherExp = isTeacherExpSkill(skill);
     const levelUp = isLevelUpSkill(skill);
     const changeJob = isChangeJobSkill(skill);
-    const autoOnly = teacherExp || levelUp || changeJob;
+    const chooseClass = isChooseClassSkill(skill);
+    const autoOnly = teacherExp || levelUp || changeJob || chooseClass;
+    const actorIsTeacher = actor != null && actor.kind === 'teacher';
 
     let effectiveStatus = status || null;
     if (autoOnly) effectiveStatus = 'AUTO';
@@ -900,30 +1024,37 @@ function resolveEventFormLayout(skill, status) {
     const reviewed = effectiveStatus === 'APPROVED' || effectiveStatus === 'REJECTED';
 
     // Comment mode: only one visible at a time (or none).
-    let commentMode = 'none'; // none | text | exp | levelup | changejob
+    let commentMode = 'none'; // none | text | exp | levelup | changejob | chooseclass
     if (ready) {
         if (teacherExp) commentMode = 'exp';
         else if (levelUp) commentMode = 'levelup';
         else if (changeJob) commentMode = 'changejob';
+        else if (chooseClass) commentMode = 'chooseclass';
         else if (reviewed) commentMode = 'text';
         // PENDING → none; AUTO never offered for normal skills
     }
 
-    let guide = '1) Pick Skill · 2) Pick Status — then the rest of the form appears.';
-    if (!skill) {
-        guide = '1) Pick a Skill. Status options depend on the skill.';
+    let guide = '1) Pick who acts (Teacher or Character) · 2) Pick a Skill — the form adapts.';
+    if (actor == null) {
+        guide = '1) Pick who acts: a Teacher (Grant/Remove EXP) or a Character (its skills).';
+    } else if (!skill) {
+        guide = actorIsTeacher
+            ? '2) Pick a Teacher EXP skill (Grant / Remove EXP).'
+            : '2) Pick a skill for this character — filtered by class and level.';
     } else if (!effectiveStatus) {
-        guide = '2) Pick a Status. Then the rest of the form will appear.';
+        guide = '3) Pick a Status. Then the rest of the form will appear.';
     } else if (teacherExp) {
-        guide = 'Teacher EXP (AUTO): no Caster. Set Guild, Reviewed By (teacher) and EXP amount (+/−).';
+        guide = 'Teacher EXP (AUTO): the actor is the teacher. Set Guild and EXP amount (+/−). Target optional (empty = whole guild).';
     } else if (levelUp) {
-        guide = 'Level Up (AUTO): Caster + Guild. Comment is fixed. No reviewer / reviewed date.';
+        guide = 'Level Up (AUTO): applies automatically to the actor. Guild is the character\'s guild.';
     } else if (changeJob) {
-        guide = 'Change Job (AUTO): Caster + Guild + new job. Comment is fixed. No reviewer / reviewed date.';
+        guide = 'Change Job (AUTO): pick the new class (must differ from the current one).';
+    } else if (chooseClass) {
+        guide = 'Choose Class (AUTO): assigns a class to a character without one.';
     } else if (pending) {
-        guide = 'PENDING: Caster + Guild. No comment, no reviewer, no reviewed date.';
+        guide = 'PENDING: Guild auto-set from the actor. No comment, no reviewer yet.';
     } else if (reviewed) {
-        guide = `${effectiveStatus}: Caster, Guild, Reviewed By and Comment required. Reviewed At optional.`;
+        guide = `${effectiveStatus}: Reviewed By (teacher) and Comment required. Reviewed At optional.`;
     } else {
         guide = 'Pick Status: PENDING, APPROVED or REJECTED.';
     }
@@ -936,6 +1067,7 @@ function resolveEventFormLayout(skill, status) {
         teacherExp,
         levelUp,
         changeJob,
+        chooseClass,
         showCaster: ready && !teacherExp,
         showReviewer: ready && (teacherExp || reviewed),
         reviewerRequired: teacherExp || reviewed,
@@ -972,14 +1104,29 @@ function applyStatusOptions(comboId, options, preferred) {
 
 let syncingInsertEventForm = false;
 
-/** Align Insert Event fields with skill/status rules (show/hide). */
+/**
+ * Align Insert Event fields with actor + skill + status rules.
+ * Handles: skill options filtered by actor, caster/guild/party/target cascading,
+ * reviewer auto-fill for teacher actors, comment modes.
+ */
 function syncInsertEventFormUI(opts = {}) {
     if (syncingInsertEventForm) return;
     syncingInsertEventForm = true;
     try {
+    const actor = parseActorValue(getComboValue('combo_insEvActor'));
+    const actorIsTeacher = actor != null && actor.kind === 'teacher';
+    const actorChar = actor != null && actor.kind === 'character' ? characterById(actor.id) : null;
+
+    // --- Skill options filtered by actor (bidirectional) ---
+    setComboOptions('combo_insEvSkill', skillOptsForActor(actor));
+    const curSkillId = getComboValueOrNull('combo_insEvSkill');
+    if (curSkillId != null && !skillAllowedForActor(skillById(curSkillId), actor)) {
+        setComboValue('combo_insEvSkill', null, '');
+    }
+
     const skill = skillById(getComboValueOrNull('combo_insEvSkill'));
     let status = getComboValue('combo_insEvStatus');
-    let layout = resolveEventFormLayout(skill, status);
+    let layout = resolveEventFormLayout(skill, status, actor);
 
     if (skill) {
         status = applyStatusOptions(
@@ -987,36 +1134,83 @@ function syncInsertEventFormUI(opts = {}) {
             layout.statusOptions,
             layout.autoOnly ? 'AUTO' : (status && layout.statusOptions.includes(status) ? status : null)
         );
-        layout = resolveEventFormLayout(skill, status);
+        layout = resolveEventFormLayout(skill, status, actor);
     } else {
         applyStatusOptions('combo_insEvStatus', [], null);
         setComboValue('combo_insEvStatus', null, '');
-        layout = resolveEventFormLayout(null, null);
+        layout = resolveEventFormLayout(null, null, actor);
     }
 
-    if (layout.teacherExp) {
-        setComboValue('combo_insEvCaster', EMPTY_SENTINEL, '--Empty--');
-        if (opts.fromSkillChange) {
-            if (isRemoveExpSkill(skill)) setInsertExpSign('-');
-            else if (isGrantExpSkill(skill)) setInsertExpSign('+');
+    // --- Guild: auto-set from the actor's character ---
+    if (actorChar && (opts.fromActorChange || getComboValueOrNull('combo_insEvGuild') == null)) {
+        const g = guildById(actorChar.guild_id);
+        const gOpt = guildOpts().find(o => Number(o.value) === Number(actorChar.guild_id));
+        setComboValue('combo_insEvGuild', actorChar.guild_id, gOpt ? gOpt.label : guildLabel(g));
+    }
+    const guildId = getComboValueOrNull('combo_insEvGuild');
+
+    // --- Target party: only parties of the selected guild ---
+    setComboOptions('combo_insEvTargetParty', partyOptsForGuildId(guildId));
+    const curParty = getComboValueOrNull('combo_insEvTargetParty');
+    if (curParty != null) {
+        const party = partyById(curParty);
+        if (!party || (guildId != null && Number(party.guild_id) !== Number(guildId))) {
+            setComboValue('combo_insEvTargetParty', null, '');
         }
     }
-    if (layout.levelUp || layout.changeJob) {
+
+    // --- Target character: only chars in the party (or guild) ---
+    const partyId = getComboValueOrNull('combo_insEvTargetParty');
+    setComboOptions('combo_insEvTargetChar', targetCharOptsFor(guildId, partyId));
+    const curTc = getComboValueOrNull('combo_insEvTargetChar');
+    if (curTc != null) {
+        const tc = characterById(curTc);
+        let tcValid = !!tc;
+        if (tcValid && guildId != null) tcValid = Number(tc.guild_id) === Number(guildId);
+        if (tcValid && partyId != null) tcValid = Number(tc.party_id ?? -1) === Number(partyId);
+        if (!tcValid) setComboValue('combo_insEvTargetChar', null, '');
+    }
+
+    // --- Reviewer: auto for teacher actor; teachers only ---
+    setComboOptions('combo_insEvReviewer', teacherOpts());
+    if (actorIsTeacher && layout.teacherExp) {
+        const t = userById(actor.id);
+        setComboValue('combo_insEvReviewer', actor.id, t ? idName(t.id, t.name) : String(actor.id));
+    } else if (layout.levelUp || layout.changeJob || layout.chooseClass) {
         setComboValue('combo_insEvReviewer', EMPTY_SENTINEL, '--Empty--');
     }
 
+    // --- Job picker options for Change Job / Choose Class ---
+    if (layout.changeJob || layout.chooseClass) {
+        const jobs = layout.changeJob && actorChar && actorChar.job
+            ? CHARACTER_JOBS.filter(j => j.toLowerCase() !== String(actorChar.job).toLowerCase())
+            : CHARACTER_JOBS.slice();
+        setComboOptions('combo_insEvChangeJob', jobs.map(j => ({ value: j, label: j })));
+        const curJob = getComboValueOrNull('combo_insEvChangeJob');
+        if (curJob != null && !jobs.some(j => j.toLowerCase() === String(curJob).toLowerCase())) {
+            setComboValue('combo_insEvChangeJob', null, '');
+        }
+    }
+
+    if (layout.teacherExp && opts.fromSkillChange) {
+        if (isRemoveExpSkill(skill)) setInsertExpSign('-');
+        else if (isGrantExpSkill(skill)) setInsertExpSign('+');
+    }
+
+    // --- Guide ---
     const guide = document.getElementById('insEvGuide');
     if (guide) guide.textContent = layout.guide;
 
-    // Skill + Status always visible; rest only when both chosen.
+    // --- Visibility: Actor + Skill always visible; rest when ready ---
     setGroupVisible('insEvStatusGroup', true);
     setGroupVisible('insEvRestForm', layout.ready);
     const submitBtn = document.getElementById('insEvSubmit');
     if (submitBtn) submitBtn.hidden = !layout.ready;
 
-    setGroupVisible('insEvCasterGroup', layout.showCaster);
+    // Reviewer hidden when the teacher actor already covers it.
+    const reviewerCoveredByActor = actorIsTeacher && layout.teacherExp;
+    setGroupVisible('insEvReviewerGroup', layout.showReviewer && !reviewerCoveredByActor);
     setGroupVisible('insEvGuildGroup', layout.ready);
-    setGroupVisible('insEvReviewerGroup', layout.showReviewer);
     setGroupVisible('insEvCommentGroup', layout.showComment);
     setGroupVisible('insEvReviewedAtGroup', layout.showReviewedAt);
     setGroupVisible('insEvTargetCharGroup', layout.ready);
@@ -1030,24 +1224,32 @@ function syncInsertEventFormUI(opts = {}) {
         if (skipTarget) skipTarget.checked = false;
     }
 
-    setLabeledRequired(document.getElementById('lblInsEvCaster'), 'Caster', layout.showCaster);
-    setLabeledRequired(document.getElementById('lblInsEvReviewer'), 'Reviewed By', layout.reviewerRequired);
+    setLabeledRequired(document.getElementById('lblInsEvReviewer'), 'Reviewed By', layout.reviewerRequired && !reviewerCoveredByActor);
     setCommentLabelRequired(document.getElementById('lblInsEvComment'), layout.showComment);
 
+    const actorHint = document.getElementById('insEvActorHint');
+    if (actorHint) {
+        if (actor == null) actorHint.textContent = 'A Teacher (for Grant/Remove EXP) or a Character.';
+        else if (actorIsTeacher) actorHint.textContent = 'Teacher actor — only Teacher EXP skills available.';
+        else if (actorChar && actorChar.job == null) actorHint.textContent = 'No class yet — only Choose Class available.';
+        else actorHint.textContent = 'Skills filtered by this character\'s class and level.';
+    }
     const statusHint = document.getElementById('insEvStatusHint');
     if (statusHint) {
         statusHint.textContent = layout.autoOnly
-            ? 'Forced to AUTO for Level Up / Change Job / Teacher EXP.'
+            ? 'Forced to AUTO for Level Up / Change Job / Choose Class / Teacher EXP.'
             : 'PENDING / APPROVED / REJECTED (AUTO only for auto skills).';
     }
-    const casterHint = document.getElementById('insEvCasterHint');
-    if (casterHint) casterHint.textContent = 'Character that casts the skill.';
     const reviewerHint = document.getElementById('insEvReviewerHint');
     if (reviewerHint) {
         reviewerHint.textContent = layout.teacherExp
             ? 'Teacher who cast Grant/Remove EXP.'
             : 'Teacher who reviewed this event.';
     }
+    const partyHint = document.getElementById('insEvTargetPartyHint');
+    if (partyHint) partyHint.textContent = 'Only parties of the selected guild.';
+    const targetHint = document.getElementById('insEvTargetCharHint');
+    if (targetHint) targetHint.textContent = partyId != null ? 'Only characters in the selected party.' : 'Only characters of the selected guild.';
 
     applyInsertCommentMode(layout.showComment ? layout.commentMode : 'none');
 
@@ -1070,12 +1272,12 @@ function assertCommentForStatus(status, comment) {
     return true;
 }
 
-function assertEventFormShape(skill, status, casterId, reviewerId, comment) {
+function assertEventFormShape(skill, status, casterId, reviewerId, comment, actor) {
     if (!skill) {
         notify('Skill is required', 'err');
         return false;
     }
-    const layout = resolveEventFormLayout(skill, status);
+    const layout = resolveEventFormLayout(skill, status, actor);
     status = layout.status;
 
     if (layout.teacherExp) {
@@ -1091,6 +1293,11 @@ function assertEventFormShape(skill, status, casterId, reviewerId, comment) {
             notify('Reviewed By (teacher) is required', 'err');
             return false;
         }
+        const reviewer = userById(reviewerId);
+        if (!reviewer || reviewer.role !== 'Teacher') {
+            notify('Reviewed By must be a Teacher', 'err');
+            return false;
+        }
         if (!parseExpDeltaComment(comment)) {
             notify('Enter a positive EXP amount with + or −', 'err');
             return false;
@@ -1099,13 +1306,26 @@ function assertEventFormShape(skill, status, casterId, reviewerId, comment) {
     }
 
     if (layout.showCaster && casterId == null) {
-        notify('Caster is required', 'err');
+        notify('Caster is required — pick who acts (a Character)', 'err');
         return false;
     }
 
-    if (layout.levelUp || layout.changeJob) {
+    // Caster ↔ skill compatibility (mirrors backend rules)
+    if (casterId != null) {
+        const caster = characterById(casterId);
+        if (!caster) {
+            notify('Caster character not found', 'err');
+            return false;
+        }
+        if (!skillAllowedForActor(skill, { kind: 'character', id: casterId })) {
+            notify('This skill is not available for the selected caster (class / level rules)', 'err');
+            return false;
+        }
+    }
+
+    if (layout.levelUp || layout.changeJob || layout.chooseClass) {
         if (reviewerId != null) {
-            notify('Level Up / Change Job have no Reviewed By', 'err');
+            notify('Level Up / Change Job / Choose Class have no Reviewed By', 'err');
             return false;
         }
         if (status !== 'AUTO') {
@@ -1120,6 +1340,17 @@ function assertEventFormShape(skill, status, casterId, reviewerId, comment) {
             notify('Pick the new job for Change Job', 'err');
             return false;
         }
+        if (layout.chooseClass) {
+            if (!parseChangeJobTarget(comment)) {
+                notify('Pick the class to assign for Choose Class', 'err');
+                return false;
+            }
+            const caster = casterId != null ? characterById(casterId) : null;
+            if (!caster || caster.job != null) {
+                notify('Choose Class requires a character without a class', 'err');
+                return false;
+            }
+        }
         return true;
     }
 
@@ -1127,9 +1358,54 @@ function assertEventFormShape(skill, status, casterId, reviewerId, comment) {
         notify('Reviewed By is required', 'err');
         return false;
     }
+    if (layout.showReviewer && layout.reviewerRequired && reviewerId != null) {
+        const reviewer = userById(reviewerId);
+        if (!reviewer || reviewer.role !== 'Teacher') {
+            notify('Reviewed By must be a Teacher', 'err');
+            return false;
+        }
+    }
     if (layout.showComment && (!comment || !String(comment).trim())) {
         notify('Comment is required for this Status', 'err');
         return false;
+    }
+    return true;
+}
+
+/** Guild / Party / Target cascading validation for the insert form. */
+function assertEventTargetConsistency(guildId, partyId, targetCharId, casterId) {
+    if (partyId != null) {
+        const party = partyById(partyId);
+        if (!party) {
+            notify('Target party not found', 'err');
+            return false;
+        }
+        if (guildId != null && Number(party.guild_id) !== Number(guildId)) {
+            notify('Target party must belong to the selected guild', 'err');
+            return false;
+        }
+    }
+    if (targetCharId != null) {
+        const tc = characterById(targetCharId);
+        if (!tc) {
+            notify('Target character not found', 'err');
+            return false;
+        }
+        if (guildId != null && Number(tc.guild_id) !== Number(guildId)) {
+            notify('Target character must be in the selected guild', 'err');
+            return false;
+        }
+        if (partyId != null && Number(tc.party_id ?? -1) !== Number(partyId)) {
+            notify('Target character must be in the selected party', 'err');
+            return false;
+        }
+    }
+    if (casterId != null && guildId != null) {
+        const caster = characterById(casterId);
+        if (caster && Number(caster.guild_id) !== Number(guildId)) {
+            notify('Caster must be in the selected guild', 'err');
+            return false;
+        }
     }
     return true;
 }
@@ -1284,26 +1560,32 @@ function configurarFormularios() {
 
     document.getElementById('formInsertEvent').addEventListener('submit', async e => {
         e.preventDefault();
+        if (!requireCombo('combo_insEvActor', 'Actor (who acts)')) return;
         if (!requireCombo('combo_insEvSkill', 'Skill')) return;
         if (!requireCombo('combo_insEvGuild', 'Guild')) return;
         if (!requireCombo('combo_insEvStatus', 'Status')) return;
         syncInsertEventFormUI();
+        const actor = parseActorValue(getComboValue('combo_insEvActor'));
         const skillId = getComboValueOrNull('combo_insEvSkill');
         const skill = skillById(skillId);
         const status = getComboValue('combo_insEvStatus');
-        const layout = resolveEventFormLayout(skill, status);
-        let casterId = getComboValueOrNull('combo_insEvCaster');
+        const layout = resolveEventFormLayout(skill, status, actor);
+        let casterId = null;
+        if (actor && actor.kind === 'character') casterId = Number(actor.id);
         let reviewerId = getComboValueOrNull('combo_insEvReviewer');
-        if (!layout.showCaster) casterId = null;
-        if (!layout.showReviewer) reviewerId = null;
+        if (!layout.showReviewer || (actor && actor.kind === 'teacher' && layout.teacherExp)) reviewerId = null;
+        const guildId = getComboValueOrNull('combo_insEvGuild');
+        const partyId = getComboValueOrNull('combo_insEvTargetParty');
+        const targetCharId = getComboValueOrNull('combo_insEvTargetChar');
         const comment = readInsertEventComment(skill, layout.status);
-        if (!assertEventFormShape(skill, layout.status, casterId, reviewerId, comment)) return;
+        if (!assertEventFormShape(skill, layout.status, casterId, reviewerId, comment, actor)) return;
+        if (!assertEventTargetConsistency(guildId, partyId, targetCharId, casterId)) return;
         const body = {
             caster_character_id: casterId,
             skill_id: skillId,
-            guild_id: getComboValueOrNull('combo_insEvGuild'),
-            target_character_id: getComboValueOrNull('combo_insEvTargetChar'),
-            target_party_id: getComboValueOrNull('combo_insEvTargetParty'),
+            guild_id: guildId,
+            target_character_id: targetCharId,
+            target_party_id: partyId,
             status: layout.status,
             reviewed_by_user_id: reviewerId,
             created_at: fromDateTimeLocalValue(document.getElementById('insEvCreatedAt')?.value),
@@ -1317,7 +1599,7 @@ function configurarFormularios() {
         const r = await api('/events', { method: 'POST', body: JSON.stringify(body) });
         if (r.ok) {
             e.target.reset();
-            ['combo_insEvCaster', 'combo_insEvSkill', 'combo_insEvGuild', 'combo_insEvTargetChar', 'combo_insEvTargetParty', 'combo_insEvReviewer', 'combo_insEvStatus']
+            ['combo_insEvActor', 'combo_insEvCaster', 'combo_insEvSkill', 'combo_insEvGuild', 'combo_insEvTargetChar', 'combo_insEvTargetParty', 'combo_insEvReviewer', 'combo_insEvStatus', 'combo_insEvChangeJob']
                 .forEach(id => setComboValue(id, null, ''));
             const amt = document.getElementById('insEvExpAmount');
             if (amt) amt.value = '';
@@ -1329,6 +1611,8 @@ function configurarFormularios() {
             const skipTarget = document.getElementById('insEvSkipTargetExp');
             if (skipCaster) skipCaster.checked = false;
             if (skipTarget) skipTarget.checked = false;
+            const changeJobPreview = document.getElementById('insEvChangeJobPreview');
+            if (changeJobPreview) changeJobPreview.value = '';
             setInsertExpSign('+');
             syncInsertEventFormUI();
             await afterMutation(cargarEvents, cargarCharacters);
@@ -1403,8 +1687,8 @@ function configurarFormularios() {
                 body.comment = buildExpDeltaComment(sign, amountEl?.value);
             } else if (layout.commentMode === 'levelup') {
                 body.comment = LEVEL_UP_COMMENT;
-            } else if (layout.commentMode === 'changejob') {
-                body.comment = changeJobAutoComment(getComboValueOrNull('combo_edit_change_job_target'));
+            } else if (layout.commentMode === 'changejob' || layout.commentMode === 'chooseclass') {
+                body.comment = autoJobComment(skill, getComboValueOrNull('combo_edit_change_job_target'));
             } else {
                 const commentEl = document.getElementById('edit_comment');
                 const raw = commentEl ? commentEl.value.trim() : '';
@@ -1708,6 +1992,7 @@ window.editarEvent = async function (id) {
             expMode: isTeacherExpSkill(skillById(r.data.skill_id)),
             levelUpMode: isLevelUpSkill(skillById(r.data.skill_id)),
             changeJobMode: isChangeJobSkill(skillById(r.data.skill_id)),
+            chooseClassMode: isChooseClassSkill(skillById(r.data.skill_id)),
             changeJobTarget: parseChangeJobTarget(r.data.comment),
             expSign: expParsed?.sign || (isRemoveExpSkill(skillById(r.data.skill_id)) ? '-' : '+'),
             expAmount: expParsed?.amount ?? '',
@@ -1782,14 +2067,14 @@ function syncEditEventFormUI() {
     setCommentModeVisible(textModeEl, mode === 'text');
     setCommentModeVisible(expRow, mode === 'exp');
     setCommentModeVisible(levelUpRow, mode === 'levelup');
-    setCommentModeVisible(changeJobRow, mode === 'changejob');
+    setCommentModeVisible(changeJobRow, mode === 'changejob' || mode === 'chooseclass');
 
     if (mode !== 'text' && textInput) textInput.value = '';
     if (mode !== 'exp') {
         const amt = document.getElementById('edit_exp_amount');
         if (amt) amt.value = '';
     }
-    if (mode !== 'changejob') {
+    if (mode !== 'changejob' && mode !== 'chooseclass') {
         setComboValue('combo_edit_change_job_target', null, '');
         const preview = document.getElementById('edit_changejob_preview');
         if (preview) preview.value = '';
@@ -1801,10 +2086,13 @@ function syncEditEventFormUI() {
             fixed.value = LEVEL_UP_COMMENT;
             fixed.readOnly = true;
         }
-    } else if (mode === 'changejob') {
+    } else if (mode === 'changejob' || mode === 'chooseclass') {
         const preview = document.getElementById('edit_changejob_preview');
         const job = getComboValueOrNull('combo_edit_change_job_target');
-        if (preview) preview.value = job ? changeJobAutoComment(job) || '' : '';
+        const skill = skillById(skillField?.comboId ? getComboValueOrNull(skillField.comboId) : null);
+        if (preview) preview.value = job ? autoJobComment(skill, job) || '' : '';
+        const jobLabel = document.querySelector('#edit_changejob_comment .field-sublabel');
+        if (jobLabel) jobLabel.textContent = mode === 'chooseclass' ? 'Class to assign' : 'New class';
     } else if (mode === 'exp') {
         const minus = document.getElementById('edit_exp_sign_minus');
         const plus = document.getElementById('edit_exp_sign_plus');
@@ -1979,7 +2267,9 @@ function abrirEdit(title, path, reload, fields, kind = null) {
                 const syncPreview = () => {
                     const job = getComboValueOrNull('combo_edit_change_job_target');
                     const preview = document.getElementById('edit_changejob_preview');
-                    if (preview) preview.value = job ? changeJobAutoComment(job) || '' : '';
+                    const skill = editContext?.fields?.find(f => f.key === 'skill_id');
+                    const skillObj = skill?.comboId ? skillById(getComboValueOrNull(skill.comboId)) : null;
+                    if (preview) preview.value = job ? autoJobComment(skillObj, job) || '' : '';
                 };
                 if (combos.combo_edit_change_job_target) {
                     combos.combo_edit_change_job_target.onChange = syncPreview;
